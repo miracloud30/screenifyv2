@@ -1,0 +1,344 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AI Job Application Screener for Fernwood Systems Ltd.
+  Serverless CV screening: S3 upload -> Textract/PyPDF2 extraction ->
+  Bedrock Claude Haiku 4.5 scoring -> DynamoDB -> SES notification.
+
+# -------------------------------------------------------------------
+# Parameters: bucket names are derived once here and reused as plain
+# strings (never !Ref) inside the CV Processor's env + IAM policies.
+# This is what breaks the S3<->Lambda circular dependency: the function
+# role never depends on the bucket resource, so SAM can wire the S3
+# event trigger in-template with no manual post-deploy step.
+# -------------------------------------------------------------------
+Parameters:
+  UploadBucketName:
+    Type: String
+    Default: ai-screener-uploads-834424012688
+  ProcessedBucketName:
+    Type: String
+    Default: ai-screener-processed-834424012688
+  WebsiteBucketName:
+    Type: String
+    Default: ai-screener-website-834424012688
+  SenderEmail:
+    Type: String
+    Default: aturutommy@gmail.com
+  RecipientEmail:
+    Type: String
+    Default: aturutommy@gmail.com
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+  BedrockModel:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 512
+    Tags:
+      aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
+    Environment:
+      Variables:
+        APPLICATIONS_TABLE: screenify-applications
+        TENANTS_TABLE: screenify-tenants
+        JOBS_TABLE: screenify-jobs
+        # Plain strings, NOT !Ref, to keep roles independent of the buckets.
+        UPLOAD_BUCKET: !Ref UploadBucketName
+        CV_PROCESSED_BUCKET: !Ref ProcessedBucketName
+        SENDER_EMAIL: !Ref SenderEmail
+        RECIPIENT_EMAIL: !Ref RecipientEmail
+        BEDROCK_REGION: !Ref BedrockRegion
+        TEXTRACT_REGION: !Ref AWS::Region
+        BEDROCK_MODEL: !Ref BedrockModel
+
+Resources:
+
+  # ================= S3 BUCKETS =================
+  CVUploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref UploadBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ['*']
+            AllowedMethods: [PUT, POST, GET, HEAD]
+            AllowedOrigins: ['*']
+            ExposedHeaders: [ETag, x-amz-request-id]
+            MaxAge: 3000
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  ProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref ProcessedBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref WebsiteBucketName
+      WebsiteConfiguration:
+        IndexDocument: upload.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WebsiteBucket
+      PolicyDocument:
+        Statement:
+          - Sid: PublicReadGetObject
+            Effect: Allow
+            Principal: '*'
+            Action: s3:GetObject
+            Resource: !Sub ${WebsiteBucket.Arn}/*
+
+  # ================= DYNAMODB =================
+  # Single GSI on status+applied_at. Score is queried by the app, not
+  # Applications are now tenant-scoped. The GSI partitions by tenant_id so
+  # every dashboard query is physically confined to one company -- a query
+  # can only ever return one tenant's candidates, isolation enforced by the
+  # index shape, not just by app code remembering to filter.
+  ApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-applications
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: applicant_id
+          AttributeType: S
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: applied_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: applicant_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        # All of a tenant's applications, newest first. Status filtering is
+        # done as a non-key filter on top of this tenant-scoped partition.
+        - IndexName: tenant-applied_at-index
+          KeySchema:
+            - AttributeName: tenant_id
+              KeyType: HASH
+            - AttributeName: applied_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  # One row per company.
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-tenants
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  # One row per job posting, scoped to a tenant. Composite key so a job is
+  # uniquely identified by (tenant_id, job_id) and jobs list per tenant.
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: tenant_id
+          AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: job_id
+          KeyType: RANGE
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  # ================= LAMBDA: API HANDLER =================
+  APIHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-api-handler
+      CodeUri: lambdas/api_handler/
+      Handler: handler.lambda_handler
+      Policies:
+        - S3CrudPolicy:
+            BucketName: !Ref UploadBucketName
+        - DynamoDBCrudPolicy:
+            TableName: screenify-applications
+        - DynamoDBCrudPolicy:
+            TableName: screenify-tenants
+        - DynamoDBCrudPolicy:
+            TableName: screenify-jobs
+        - Statement:
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ai-screener-notifier
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: '*'
+      Events:
+        UploadAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /upload
+            Method: POST
+        DashboardAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /applications
+            Method: GET
+        DecisionAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /applications/{id}/decision
+            Method: POST
+
+  # ================= LAMBDA: CV PROCESSOR =================
+  # No !Ref to any bucket anywhere in this function's policies or env,
+  # so its role stays independent of the buckets -> the S3 Events
+  # trigger below wires cleanly with no circular dependency.
+  CVProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-cv-processor
+      CodeUri: lambdas/cv_processor/
+      Handler: handler.lambda_handler
+      Layers:
+        - !Ref DepsLayer
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource:
+                - !Sub arn:aws:s3:::${UploadBucketName}/*
+                - !Sub arn:aws:s3:::${ProcessedBucketName}/*
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:Query]
+              Resource:
+                - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-applications
+                - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-applications/index/*
+                - !Sub arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-jobs
+            - Effect: Allow
+              Action:
+                - textract:DetectDocumentText
+                - textract:AnalyzeDocument
+                - textract:StartDocumentTextDetection
+                - textract:GetDocumentTextDetection
+              Resource: '*'
+            - Effect: Allow
+              Action: [comprehend:DetectEntities, comprehend:DetectKeyPhrases]
+              Resource: '*'
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: '*'
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ai-screener-notifier
+      Events:
+        CVUploaded:
+          Type: S3
+          Properties:
+            Bucket: !Ref CVUploadsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: prefix
+                    Value: uploads/
+
+  # ================= LAMBDA: NOTIFIER =================
+  NotifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-notifier
+      CodeUri: lambdas/notifier/
+      Handler: handler.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: screenify-applications
+        - Statement:
+            - Effect: Allow
+              Action: [ses:SendEmail, ses:SendRawEmail]
+              Resource: '*'
+
+  # ================= LAMBDA LAYER (PyPDF2 + python-docx) =================
+  DepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: ai-screener-deps
+      ContentUri: layer/
+      CompatibleRuntimes:
+        - python3.12
+    Metadata:
+      BuildMethod: python3.12
+
+  # ================= API GATEWAY =================
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      OpenApiVersion: 3.0.0
+      Cors:
+        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowHeaders: "'Content-Type, x-api-key'"
+        AllowOrigin: "'*'"
+      Tags:
+        aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
+
+Outputs:
+  WebsiteURL:
+    Description: URL for the upload form
+    Value: !GetAtt WebsiteBucket.WebsiteURL
+  ApiEndpoint:
+    Description: API Gateway endpoint
+    Value: !Sub https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+  UploadBucket:
+    Value: !Ref UploadBucketName
+  ProcessedBucket:
+    Value: !Ref ProcessedBucketName
+  WebsiteBucket:
+    Value: !Ref WebsiteBucketName

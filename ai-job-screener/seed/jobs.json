@@ -1,0 +1,41 @@
+[
+  {
+    "tenant_id": "acme",
+    "job_id": "devops-engineer",
+    "title": "DevOps Engineer",
+    "job_description": "We are hiring a DevOps Engineer to build and maintain our cloud infrastructure. You will design CI/CD pipelines, manage containerised workloads on Kubernetes, automate infrastructure with Terraform, and keep our AWS environment reliable and secure. Strong Linux and Git fundamentals are essential. Experience with monitoring and Python scripting is a plus. Minimum 2 years in a similar role.",
+    "skills_required": {"CI/CD": 15, "Linux": 10, "Docker": 10, "AWS": 10, "Git": 5},
+    "skills_preferred": {"Terraform": 5, "Kubernetes": 5, "Ansible": 5, "Python": 3, "Monitoring": 2},
+    "experience_years_required": 2,
+    "experience_points": 20,
+    "education_points": 10,
+    "shortlist_threshold": 80,
+    "human_review_threshold": 50
+  },
+  {
+    "tenant_id": "acme",
+    "job_id": "backend-engineer",
+    "title": "Backend Engineer",
+    "job_description": "We are looking for a Backend Engineer to design and build the APIs that power our products. You will write clean, well-tested Python, model data in SQL databases, and ship reliable REST services. Familiarity with FastAPI, PostgreSQL, Redis, and containerised deployment is a plus. Minimum 2 years building production backends.",
+    "skills_required": {"Python": 15, "SQL": 10, "REST APIs": 10, "Git": 5, "Testing": 10},
+    "skills_preferred": {"FastAPI": 5, "PostgreSQL": 5, "Redis": 5, "Docker": 3, "AWS": 2},
+    "experience_years_required": 2,
+    "experience_points": 20,
+    "education_points": 10,
+    "shortlist_threshold": 80,
+    "human_review_threshold": 50
+  },
+  {
+    "tenant_id": "beta",
+    "job_id": "marketing-manager",
+    "title": "Marketing Manager",
+    "job_description": "Beta Industries seeks a Marketing Manager to own our growth strategy. You will plan and run multi-channel campaigns, lead content marketing and SEO, and use analytics to drive decisions. Strong copywriting is essential. Experience with paid ads, email marketing, social media, and CRM tools is valued. Minimum 3 years in marketing.",
+    "skills_required": {"Campaign Strategy": 15, "Content Marketing": 10, "SEO": 10, "Analytics": 10, "Copywriting": 5},
+    "skills_preferred": {"Paid Ads": 5, "Email Marketing": 5, "Social Media": 5, "Brand Strategy": 3, "CRM": 2},
+    "experience_years_required": 3,
+    "experience_points": 20,
+    "education_points": 10,
+    "shortlist_threshold": 75,
+    "human_review_threshold": 45
+  }
+]

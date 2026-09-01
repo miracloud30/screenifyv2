@@ -1,0 +1,16 @@
+[
+  {
+    "tenant_id": "acme",
+    "name": "Acme Ltd",
+    "logo_url": "",
+    "brand_color": "#4f46e5",
+    "plan": "pro"
+  },
+  {
+    "tenant_id": "beta",
+    "name": "Beta Industries",
+    "logo_url": "",
+    "brand_color": "#059669",
+    "plan": "pro"
+  }
+]

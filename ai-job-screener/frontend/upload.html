@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fernwood Systems — Apply Now</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d1b4e 100%);
+    min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px;
+  }
+  .container { background: #fff; border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.35); padding: 40px; max-width: 520px; width: 100%; }
+  .logo { text-align: center; margin-bottom: 28px; }
+  .logo h1 { color: #1e3a5f; font-size: 26px; font-weight: 700; letter-spacing: -0.5px; }
+  .logo p { color: #6b7280; font-size: 14px; margin-top: 4px; }
+  .requirements { background: #f8fafc; padding: 14px 16px; border-radius: 10px; margin-bottom: 22px; font-size: 13px; color: #475569; border: 1px solid #e2e8f0; line-height: 1.6; }
+  .requirements strong { color: #1e3a5f; }
+  .form-group { margin-bottom: 18px; }
+  .form-group label { display: block; font-weight: 600; color: #334155; margin-bottom: 6px; font-size: 13px; }
+  .form-group input, .form-group select {
+    width: 100%; padding: 12px 14px; border: 2px solid #e2e8f0; border-radius: 10px; font-size: 14px;
+    transition: border-color 0.2s; background: #f8fafc; color: #1e293b;
+  }
+  .form-group input:focus, .form-group select:focus { outline: none; border-color: #3b82f6; background: #fff; }
+  .file-upload { border: 2px dashed #cbd5e1; border-radius: 10px; padding: 28px; text-align: center; cursor: pointer; transition: all 0.2s; background: #f8fafc; position: relative; }
+  .file-upload:hover, .file-upload.dragover { border-color: #3b82f6; background: #eff6ff; }
+  .file-upload input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+  .file-upload .icon { font-size: 40px; display: block; margin-bottom: 8px; }
+  .file-upload .text { color: #64748b; font-size: 14px; }
+  .file-upload .filename { color: #1e3a5f; font-weight: 600; font-size: 13px; margin-top: 6px; }
+  .btn-submit {
+    width: 100%; padding: 14px; background: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+    color: #fff; border: none; border-radius: 10px; font-size: 16px; font-weight: 600; cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s; margin-top: 8px;
+  }
+  .btn-submit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(59,130,246,0.4); }
+  .btn-submit:disabled { opacity: 0.6; cursor: not-allowed; }
+  .message { margin-top: 18px; padding: 14px; border-radius: 10px; display: none; font-size: 14px; }
+  .message.show { display: block; }
+  .message.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+  .message.error { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+  .spinner { display: inline-block; width: 18px; height: 18px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 0.8s linear infinite; margin-right: 8px; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo">
+      <h1>Fernwood Systems</h1>
+      <p>AI-Powered Job Application</p>
+    </div>
+    <div class="requirements">
+      <strong>DevOps Engineer — Requirements</strong><br>
+      Required: CI/CD, Linux, Docker, AWS, Git (50 pts)<br>
+      Preferred: Terraform, Kubernetes, Ansible, Python, Monitoring (20 pts)<br>
+      Experience: 2+ years (20 pts) · Education (10 pts)
+    </div>
+    <div class="form-group">
+      <label for="name">Full Name *</label>
+      <input type="text" id="name" placeholder="e.g. Jane Doe">
+    </div>
+    <div class="form-group">
+      <label for="email">Email Address *</label>
+      <input type="email" id="email" placeholder="e.g. jane@example.com">
+    </div>
+    <div class="form-group">
+      <label>Position</label>
+      <div id="jobTitle" style="padding:12px 14px;border:2px solid #e2e8f0;border-radius:10px;background:#f8fafc;color:#1e293b;font-size:14px;">Loading role...</div>
+    </div>
+    <div class="form-group">
+      <label>Upload CV * (PDF or DOCX, max 5MB)</label>
+      <div class="file-upload" id="fileDrop">
+        <span class="icon">📄</span>
+        <span class="text">Drop your CV here or click to browse</span>
+        <div class="filename" id="fileName"></div>
+        <input type="file" id="fileInput" accept=".pdf,.docx">
+      </div>
+    </div>
+    <button class="btn-submit" id="submitBtn">Submit Application</button>
+    <div class="message" id="message"></div>
+  </div>
+
+<script>
+  // Replaced at deploy time by scripts/deploy.ps1
+  const API_URL = 'REPLACE_WITH_API_URL';
+
+  // Multi-tenant: the apply link carries which company + role this is for,
+  // e.g. upload.html?tenant=acme&job=devops-engineer
+  const params = new URLSearchParams(window.location.search);
+  const TENANT_ID = params.get('tenant');
+  const JOB_ID = params.get('job');
+
+  // Load the job title so the candidate sees the role they're applying for.
+  (async function loadJob() {
+    const el = document.getElementById('jobTitle');
+    if (!TENANT_ID || !JOB_ID) {
+      el.textContent = 'Invalid application link (missing company or role).';
+      el.style.color = '#dc2626';
+      return;
+    }
+    try {
+      const res = await fetch(`${API_URL}/tenants/${encodeURIComponent(TENANT_ID)}/jobs/${encodeURIComponent(JOB_ID)}`);
+      if (!res.ok) throw new Error('not found');
+      const job = await res.json();
+      el.textContent = job.title;
+    } catch (e) {
+      el.textContent = 'This role could not be found.';
+      el.style.color = '#dc2626';
+    }
+  })();
+
+  const fileInput = document.getElementById('fileInput');
+  const fileDrop = document.getElementById('fileDrop');
+  const fileName = document.getElementById('fileName');
+  let selectedFile = null;
+
+  const VALID_TYPES = [
+    'application/pdf',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ];
+
+  fileDrop.addEventListener('dragover', e => { e.preventDefault(); fileDrop.classList.add('dragover'); });
+  fileDrop.addEventListener('dragleave', () => fileDrop.classList.remove('dragover'));
+  fileDrop.addEventListener('drop', e => {
+    e.preventDefault(); fileDrop.classList.remove('dragover');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', e => { if (e.target.files.length) handleFile(e.target.files[0]); });
+
+  function handleFile(file) {
+    // Some browsers report an empty type for .docx; fall back to the extension.
+    const ext = file.name.toLowerCase().split('.').pop();
+    const typeOk = VALID_TYPES.includes(file.type) || ext === 'pdf' || ext === 'docx';
+    if (!typeOk) { showMessage('Please upload a PDF or DOCX file.', 'error'); return; }
+    if (file.size > 5 * 1024 * 1024) { showMessage('File exceeds the 5MB limit.', 'error'); return; }
+    selectedFile = file;
+    fileName.textContent = `${file.name} (${(file.size / 1048576).toFixed(2)} MB)`;
+    hideMessage();
+  }
+
+  document.getElementById('submitBtn').addEventListener('click', async () => {
+    const name = document.getElementById('name').value.trim();
+    const email = document.getElementById('email').value.trim();
+
+    if (!TENANT_ID || !JOB_ID) {
+      showMessage('This application link is invalid. Please use the link provided in the job posting.', 'error');
+      return;
+    }
+    if (!name || !email || !selectedFile) {
+      showMessage('Please fill in all fields and attach a CV.', 'error');
+      return;
+    }
+
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span>Processing...';
+
+    try {
+      const presignRes = await fetch(`${API_URL}/upload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, tenant_id: TENANT_ID, job_id: JOB_ID, filename: selectedFile.name })
+      });
+      if (!presignRes.ok) {
+        const err = await presignRes.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to get upload URL');
+      }
+      const presign = await presignRes.json();
+
+      // CRITICAL: the PUT Content-Type must match what the URL was signed with,
+      // otherwise S3 returns 403 SignatureDoesNotMatch (esp. for DOCX).
+      const putRes = await fetch(presign.upload_url, {
+        method: 'PUT',
+        body: selectedFile,
+        headers: { 'Content-Type': presign.content_type }
+      });
+      if (!putRes.ok) throw new Error('Failed to upload file to storage');
+
+      showMessage('Application submitted successfully. You will hear from us soon.', 'success');
+      document.getElementById('name').value = '';
+      document.getElementById('email').value = '';
+      selectedFile = null;
+      fileName.textContent = '';
+    } catch (e) {
+      console.error(e);
+      showMessage(e.message || 'Something went wrong. Please try again.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Submit Application';
+    }
+  });
+
+  function showMessage(text, type) {
+    const m = document.getElementById('message');
+    m.textContent = text;
+    m.className = `message show ${type}`;
+  }
+  function hideMessage() { document.getElementById('message').className = 'message'; }
+</script>
+</body>
+</html>

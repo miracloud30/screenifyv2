@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recruiter Dashboard — Fernwood Systems</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; padding: 24px; color: #1e293b; }
+  .container { max-width: 1100px; margin: 0 auto; }
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header h1 { font-size: 26px; color: #1e3a5f; }
+  .header .subtitle { color: #64748b; font-size: 14px; margin-top: 2px; }
+  .refresh-btn { padding: 9px 18px; background: #3b82f6; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
+  .refresh-btn:hover { background: #2563eb; }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .stat-card { background: #fff; padding: 14px 18px; border-radius: 12px; box-shadow: 0 1px 4px rgba(0,0,0,0.06); text-align: center; }
+  .stat-card .number { font-size: 26px; font-weight: 700; }
+  .stat-card .label { font-size: 11px; color: #94a3b8; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card.total .number { color: #3b82f6; }
+  .stat-card.needs_review .number { color: #7c3aed; }
+  .stat-card.shortlisted .number { color: #059669; }
+  .stat-card.interview .number { color: #0891b2; }
+  .stat-card.rejected .number { color: #dc2626; }
+  .filters { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .filter-btn { padding: 8px 16px; border: 2px solid #e2e8f0; border-radius: 20px; background: #fff; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
+  .filter-btn:hover { border-color: #3b82f6; }
+  .filter-btn.active { background: #3b82f6; color: #fff; border-color: #3b82f6; }
+  .cards { display: flex; flex-direction: column; gap: 14px; }
+  .card { background: #fff; border-radius: 14px; box-shadow: 0 1px 6px rgba(0,0,0,0.07); padding: 20px 22px; border-left: 4px solid #e2e8f0; transition: box-shadow 0.2s; }
+  .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+  .card.suggest-shortlisted { border-left-color: #059669; }
+  .card.suggest-under_review { border-left-color: #d97706; }
+  .card.suggest-rejected { border-left-color: #dc2626; }
+  .card.suggest-flagged { border-left-color: #db2777; }
+  .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+  .cand { flex: 1; min-width: 220px; }
+  .cand .name { font-size: 17px; font-weight: 700; color: #1e293b; }
+  .cand .meta { font-size: 13px; color: #94a3b8; margin-top: 2px; }
+  .cand .role { font-size: 13px; color: #64748b; margin-top: 4px; }
+  .scoreblock { text-align: center; min-width: 90px; }
+  .scoreblock .score { font-size: 30px; font-weight: 800; line-height: 1; }
+  .scoreblock .score-label { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+  .scoreblock .conf { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+  .score-high { color: #059669; } .score-medium { color: #d97706; } .score-low { color: #dc2626; }
+  .badges { display: flex; gap: 8px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .status-badge, .ai-chip { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+  .ai-chip { background: #f5f3ff; color: #7c3aed; border: 1px dashed #c4b5fd; }
+  .status-badge.needs_review { background: #f5f3ff; color: #7c3aed; }
+  .status-badge.shortlisted { background: #ecfdf5; color: #059669; }
+  .status-badge.interview { background: #ecfeff; color: #0891b2; }
+  .status-badge.rejected { background: #fef2f2; color: #dc2626; }
+  .status-badge.on_hold { background: #fefce8; color: #a16207; }
+  .status-badge.flagged { background: #fdf2f8; color: #db2777; }
+  .status-badge.processing { background: #eff6ff; color: #2563eb; }
+  .status-badge.pending_upload { background: #f1f5f9; color: #64748b; }
+  .status-badge.error { background: #fef2f2; color: #991b1b; }
+  .skills-list { display: flex; flex-wrap: wrap; gap: 5px; margin: 10px 0; }
+  .skill-tag { padding: 2px 9px; border-radius: 5px; font-size: 11px; background: #ecfdf5; color: #059669; }
+  .skill-tag.missing { background: #fef2f2; color: #dc2626; }
+  .summary { font-size: 13.5px; color: #475569; line-height: 1.55; margin: 8px 0; }
+  .summary.collapsed { display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .more-btn { background: none; border: none; color: #3b82f6; font-size: 12px; cursor: pointer; padding: 0; margin-bottom: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; border-top: 1px solid #f1f5f9; padding-top: 14px; }
+  .action-btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s; }
+  .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .act-shortlist { background: #ecfdf5; color: #059669; } .act-shortlist:hover:not(:disabled) { background: #059669; color: #fff; }
+  .act-interview { background: #ecfeff; color: #0891b2; } .act-interview:hover:not(:disabled) { background: #0891b2; color: #fff; }
+  .act-reject { background: #fef2f2; color: #dc2626; } .act-reject:hover:not(:disabled) { background: #dc2626; color: #fff; }
+  .act-hold { background: #fefce8; color: #a16207; } .act-hold:hover:not(:disabled) { background: #a16207; color: #fff; }
+  .decided-note { font-size: 12px; color: #94a3b8; margin-top: 12px; font-style: italic; }
+  .loading, .empty { text-align: center; padding: 50px; color: #94a3b8; }
+  .pagination { display: flex; justify-content: center; gap: 10px; padding: 20px; }
+  .pagination button { padding: 8px 16px; border: 1px solid #e2e8f0; border-radius: 6px; background: #fff; cursor: pointer; }
+  .pagination button:hover:not(:disabled) { border-color: #3b82f6; }
+  .pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+  /* confirm modal */
+  .modal-bg { display: none; position: fixed; inset: 0; background: rgba(15,23,42,0.5); align-items: center; justify-content: center; z-index: 50; }
+  .modal-bg.show { display: flex; }
+  .modal { background: #fff; border-radius: 14px; padding: 26px; max-width: 420px; width: 90%; box-shadow: 0 20px 60px rgba(0,0,0,0.3); }
+  .modal h3 { font-size: 18px; margin-bottom: 10px; color: #1e293b; }
+  .modal p { font-size: 14px; color: #64748b; line-height: 1.5; margin-bottom: 20px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+  .modal-btn { padding: 9px 18px; border-radius: 8px; border: none; cursor: pointer; font-size: 14px; font-weight: 600; }
+  .modal-cancel { background: #f1f5f9; color: #475569; }
+  .modal-confirm { background: #3b82f6; color: #fff; }
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #1e293b; color: #fff; padding: 12px 22px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity 0.3s; z-index: 60; }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <div>
+        <h1>Application Dashboard</h1>
+        <div class="subtitle">AI triages · you decide · candidates are emailed on your action</div>
+      </div>
+      <button class="refresh-btn" onclick="loadApplications()">Refresh</button>
+    </div>
+    <div class="stats">
+      <div class="stat-card total"><div class="number" id="s-total">0</div><div class="label">Total</div></div>
+      <div class="stat-card needs_review"><div class="number" id="s-needs_review">0</div><div class="label">Needs Decision</div></div>
+      <div class="stat-card shortlisted"><div class="number" id="s-shortlisted">0</div><div class="label">Shortlisted</div></div>
+      <div class="stat-card interview"><div class="number" id="s-interview">0</div><div class="label">Interview</div></div>
+      <div class="stat-card rejected"><div class="number" id="s-rejected">0</div><div class="label">Rejected</div></div>
+    </div>
+    <div class="filters">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="needs_review">Needs Decision</button>
+      <button class="filter-btn" data-filter="shortlisted">Shortlisted</button>
+      <button class="filter-btn" data-filter="interview">Interview</button>
+      <button class="filter-btn" data-filter="rejected">Rejected</button>
+      <button class="filter-btn" data-filter="on_hold">On Hold</button>
+      <button class="filter-btn" data-filter="flagged">Flagged</button>
+    </div>
+    <div id="loading" class="loading">Loading applications...</div>
+    <div class="cards" id="cards"></div>
+    <div class="pagination">
+      <button id="prevBtn" onclick="loadPrevious()" disabled>Previous</button>
+      <button id="nextBtn" onclick="loadNext()" disabled>Next</button>
+    </div>
+  </div>
+
+  <div class="modal-bg" id="modalBg">
+    <div class="modal">
+      <h3 id="modalTitle">Confirm decision</h3>
+      <p id="modalBody"></p>
+      <div class="modal-actions">
+        <button class="modal-btn modal-cancel" onclick="closeModal()">Cancel</button>
+        <button class="modal-btn modal-confirm" id="modalConfirm">Confirm</button>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast"></div>
+
+<script>
+  const API_URL = 'REPLACE_WITH_API_URL';
+  // Multi-tenant: dashboard is scoped to one company, e.g. dashboard.html?tenant=acme
+  // (Step 4 replaces this URL param with the recruiter's authenticated tenant.)
+  const TENANT_ID = new URLSearchParams(window.location.search).get('tenant');
+  const DECIDED = ['shortlisted','interview','rejected','on_hold'];
+
+  let currentFilter = 'all';
+  let nextToken = null;
+  let prevTokens = [];
+
+  document.querySelectorAll('.filter-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+      this.classList.add('active');
+      currentFilter = this.dataset.filter;
+      nextToken = null; prevTokens = [];
+      loadApplications();
+    });
+  });
+
+  async function loadApplications() {
+    const loading = document.getElementById('loading');
+    const cards = document.getElementById('cards');
+    if (!TENANT_ID) {
+      loading.style.display = 'block';
+      loading.textContent = 'No company selected. Add ?tenant=acme (or ?tenant=beta) to the URL.';
+      cards.innerHTML = '';
+      return;
+    }
+    loading.style.display = 'block'; cards.innerHTML = '';
+    try {
+      let url = `${API_URL}/applications?tenant_id=${encodeURIComponent(TENANT_ID || '')}&limit=20`;
+      if (currentFilter !== 'all') url += `&status=${currentFilter}`;
+      if (nextToken) url += `&next_token=${encodeURIComponent(nextToken)}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      loading.style.display = 'none';
+
+      const apps = (data.applications || []).sort((a,b) => (b.score||0) - (a.score||0));
+      if (apps.length) {
+        apps.forEach(app => cards.appendChild(renderCard(app)));
+      } else {
+        cards.innerHTML = '<div class="empty">No applications in this view.</div>';
+      }
+      if (data.stats) updateStats(data.stats);
+      document.getElementById('prevBtn').disabled = prevTokens.length === 0;
+      document.getElementById('nextBtn').disabled = !data.next_token;
+      nextToken = data.next_token || null;
+    } catch (e) {
+      console.error(e);
+      loading.textContent = 'Failed to load applications. Please refresh.';
+      loading.style.display = 'block';
+    }
+  }
+
+  function renderCard(app) {
+    const card = document.createElement('div');
+    const suggestion = app.ai_suggested_status || 'under_review';
+    card.className = `card suggest-${esc(suggestion)}`;
+
+    const matched = (app.skills_matched || []).map(s => `<span class="skill-tag">${esc(s)}</span>`).join('');
+    const missing = (app.skills_missing || []).map(s => `<span class="skill-tag missing">${esc(s)}</span>`).join('');
+    const decided = DECIDED.includes(app.status);
+    const summaryId = `sum-${esc(app.applicant_id)}`;
+
+    card.innerHTML = `
+      <div class="card-top">
+        <div class="cand">
+          <div class="name">${esc(app.name)}</div>
+          <div class="meta">${esc(app.email)}</div>
+          <div class="role">Applied for: ${esc(app.role)} · ${esc(app.years_experience || 0)}y experience · ${fmtDate(app.applied_at)}</div>
+        </div>
+        <div class="scoreblock">
+          <div class="score ${scoreClass(app.score)}">${app.score || 0}</div>
+          <div class="score-label">AI Score</div>
+          <div class="conf">${app.confidence || 0}% confidence</div>
+        </div>
+      </div>
+      <div class="badges">
+        <span class="status-badge ${esc(app.status)}">${statusLabel(app.status)}</span>
+        ${!decided ? `<span class="ai-chip">AI suggests: ${suggestLabel(suggestion)}</span>` : ''}
+      </div>
+      <div class="skills-list">${matched}${missing}</div>
+      <div class="summary collapsed" id="${summaryId}">${esc(app.summary || '')}</div>
+      ${(app.summary || '').length > 140 ? `<button class="more-btn" onclick="toggleSummary('${summaryId}', this)">Show more</button>` : ''}
+      ${decided ? renderDecided(app) : renderActions(app)}
+    `;
+    return card;
+  }
+
+  function renderActions(app) {
+    const id = esc(app.applicant_id);
+    return `<div class="actions">
+      <button class="action-btn act-shortlist" onclick="askDecision('${id}','${esc(app.name)}','shortlist')">Shortlist</button>
+      <button class="action-btn act-interview" onclick="askDecision('${id}','${esc(app.name)}','interview')">Invite to Interview</button>
+      <button class="action-btn act-hold" onclick="askDecision('${id}','${esc(app.name)}','hold')">Hold</button>
+      <button class="action-btn act-reject" onclick="askDecision('${id}','${esc(app.name)}','reject')">Reject</button>
+    </div>`;
+  }
+
+  function renderDecided(app) {
+    const emailed = app.status !== 'on_hold';
+    return `<div class="decided-note">Decision recorded: ${statusLabel(app.status)}${emailed ? ' · candidate has been emailed' : ' · no email sent (internal hold)'}</div>`;
+  }
+
+  // ---- decision flow with confirm modal ----
+  let pending = null;
+  const DECISION_COPY = {
+    shortlist: ['Shortlist this candidate?', 'They will receive a shortlisting email.'],
+    interview: ['Invite to interview?', 'They will receive an interview invitation email.'],
+    reject:    ['Reject this candidate?', 'They will receive a polite rejection email. This cannot be undone.'],
+    hold:      ['Put on hold?', 'This is internal only. No email will be sent to the candidate.']
+  };
+
+  function askDecision(id, name, decision) {
+    pending = { id, decision };
+    const [title, body] = DECISION_COPY[decision];
+    document.getElementById('modalTitle').textContent = title;
+    document.getElementById('modalBody').textContent = `${name}: ${body}`;
+    document.getElementById('modalBg').classList.add('show');
+  }
+  function closeModal() { document.getElementById('modalBg').classList.remove('show'); pending = null; }
+
+  document.getElementById('modalConfirm').addEventListener('click', async () => {
+    if (!pending) return;
+    const { id, decision } = pending;
+    const btn = document.getElementById('modalConfirm');
+    btn.disabled = true; btn.textContent = 'Working...';
+    try {
+      const res = await fetch(`${API_URL}/applications/${encodeURIComponent(id)}/decision`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision, tenant_id: TENANT_ID })
+      });
+      if (!res.ok) throw new Error('Decision failed');
+      const data = await res.json();
+      showToast(data.emailed ? 'Decision saved and candidate emailed.' : 'Decision saved.');
+      closeModal();
+      loadApplications();
+    } catch (e) {
+      console.error(e);
+      showToast('Something went wrong. Try again.');
+    } finally {
+      btn.disabled = false; btn.textContent = 'Confirm';
+    }
+  });
+
+  function toggleSummary(id, btn) {
+    const el = document.getElementById(id);
+    el.classList.toggle('collapsed');
+    btn.textContent = el.classList.contains('collapsed') ? 'Show more' : 'Show less';
+  }
+
+  function updateStats(s) {
+    document.getElementById('s-total').textContent = s.total || 0;
+    document.getElementById('s-needs_review').textContent = s.needs_review || 0;
+    document.getElementById('s-shortlisted').textContent = s.shortlisted || 0;
+    document.getElementById('s-interview').textContent = s.interview || 0;
+    document.getElementById('s-rejected').textContent = s.rejected || 0;
+  }
+
+  function statusLabel(s) {
+    const map = { needs_review:'Needs your decision', shortlisted:'Shortlisted', interview:'Interview', rejected:'Rejected', on_hold:'On hold', flagged:'Flagged (low confidence)', processing:'Processing', pending_upload:'Awaiting upload', error:'Error' };
+    return map[s] || (s || '').replace('_',' ');
+  }
+  function suggestLabel(s) {
+    const map = { shortlisted:'Shortlist', under_review:'Review', rejected:'Reject', flagged:'Manual review' };
+    return map[s] || s;
+  }
+  function scoreClass(s) { if (s >= 80) return 'score-high'; if (s >= 50) return 'score-medium'; return 'score-low'; }
+  function fmtDate(d) { if (!d) return ''; return new Date(d).toLocaleDateString('en-US', { month:'short', day:'numeric', hour:'2-digit', minute:'2-digit' }); }
+  function esc(s) { if (s === 0) return '0'; if (!s) return ''; const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+  function showToast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2600); }
+  function loadNext() { if (nextToken) { prevTokens.push(nextToken); loadApplications(); } }
+  function loadPrevious() { if (prevTokens.length) { prevTokens.pop(); nextToken = prevTokens.length ? prevTokens[prevTokens.length-1] : null; loadApplications(); } }
+
+  loadApplications();
+  setInterval(() => { if (!document.hidden && !document.getElementById('modalBg').classList.contains('show')) loadApplications(); }, 30000);
+</script>
+</body>
+</html>
