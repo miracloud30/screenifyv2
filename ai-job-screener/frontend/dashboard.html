@@ -136,8 +136,40 @@
 <script>
   const API_URL = 'REPLACE_WITH_API_URL';
   // Multi-tenant: dashboard is scoped to one company, e.g. dashboard.html?tenant=acme
-  // (Step 4 replaces this URL param with the recruiter's authenticated tenant.)
+  // (Step 4 replaces this URL param + key with a real Cognito session.)
   const TENANT_ID = new URLSearchParams(window.location.search).get('tenant');
+  // Demo gate: the tenant access key, held only in memory for the session.
+  let TENANT_KEY = sessionStorage.getItem('screenify_key_' + TENANT_ID) || null;
+
+  function authHeaders(extra) {
+    const h = extra || {};
+    if (TENANT_KEY) h['x-tenant-key'] = TENANT_KEY;
+    return h;
+  }
+
+  function promptForKey(msg) {
+    const cards = document.getElementById('cards');
+    const loading = document.getElementById('loading');
+    loading.style.display = 'none';
+    cards.innerHTML = `
+      <div style="max-width:400px;margin:40px auto;background:#fff;padding:28px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.08);text-align:center;">
+        <h3 style="color:#1e3a5f;margin-bottom:8px;">Recruiter sign-in</h3>
+        <p style="color:#64748b;font-size:14px;margin-bottom:16px;">${msg || 'Enter your access key for <b>' + esc(TENANT_ID || '') + '</b>.'}</p>
+        <input id="keyInput" type="password" placeholder="Access key" style="width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:9px;font-size:14px;margin-bottom:12px;" />
+        <button onclick="submitKey()" style="width:100%;padding:11px;background:#3b82f6;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;">Open dashboard</button>
+      </div>`;
+    const inp = document.getElementById('keyInput');
+    inp.focus();
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') submitKey(); });
+  }
+
+  window.submitKey = function () {
+    const val = document.getElementById('keyInput').value.trim();
+    if (!val) return;
+    TENANT_KEY = val;
+    sessionStorage.setItem('screenify_key_' + TENANT_ID, val);
+    loadApplications();
+  };
   const DECIDED = ['shortlisted','interview','rejected','on_hold'];
 
   let currentFilter = 'all';
@@ -163,12 +195,19 @@
       cards.innerHTML = '';
       return;
     }
+    if (!TENANT_KEY) { promptForKey(); return; }
     loading.style.display = 'block'; cards.innerHTML = '';
     try {
       let url = `${API_URL}/applications?tenant_id=${encodeURIComponent(TENANT_ID || '')}&limit=20`;
       if (currentFilter !== 'all') url += `&status=${currentFilter}`;
       if (nextToken) url += `&next_token=${encodeURIComponent(nextToken)}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
+      if (res.status === 401 || res.status === 403) {
+        TENANT_KEY = null;
+        sessionStorage.removeItem('screenify_key_' + TENANT_ID);
+        promptForKey('That key was not accepted. Try again.');
+        return;
+      }
       if (!res.ok) throw new Error('Failed to fetch');
       const data = await res.json();
       loading.style.display = 'none';
@@ -266,7 +305,7 @@
     try {
       const res = await fetch(`${API_URL}/applications/${encodeURIComponent(id)}/decision`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ decision, tenant_id: TENANT_ID })
       });
       if (!res.ok) throw new Error('Decision failed');

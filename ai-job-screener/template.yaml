@@ -236,6 +236,30 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /applications/{id}/decision
             Method: POST
+        GetTenantAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}
+            Method: GET
+        ListJobsAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}/jobs
+            Method: GET
+        GetJobAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}/jobs/{jid}
+            Method: GET
+        CreateJobAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}/jobs
+            Method: POST
 
   # ================= LAMBDA: CV PROCESSOR =================
   # No !Ref to any bucket anywhere in this function's policies or env,
@@ -306,6 +330,8 @@ Resources:
               Resource: '*'
 
   # ================= LAMBDA LAYER (PyPDF2 + python-docx) =================
+  # Dependencies are pre-built into layer/python/ by deploy-nosam.ps1 (pip
+  # --target), then packaged by `aws cloudformation package`. No SAM/Docker.
   DepsLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
@@ -313,8 +339,6 @@ Resources:
       ContentUri: layer/
       CompatibleRuntimes:
         - python3.12
-    Metadata:
-      BuildMethod: python3.12
 
   # ================= API GATEWAY =================
   ApiGateway:
@@ -324,7 +348,7 @@ Resources:
       OpenApiVersion: 3.0.0
       Cors:
         AllowMethods: "'POST, GET, OPTIONS'"
-        AllowHeaders: "'Content-Type, x-api-key'"
+        AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
         AllowOrigin: "'*'"
       Tags:
         aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2

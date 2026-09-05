@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Fernwood Systems — Apply Now</title>
+<title>Apply</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -48,15 +48,10 @@
 <body>
   <div class="container">
     <div class="logo">
-      <h1>Fernwood Systems</h1>
-      <p>AI-Powered Job Application</p>
+      <h1 id="companyName">Loading...</h1>
+      <p>Job Application</p>
     </div>
-    <div class="requirements">
-      <strong>DevOps Engineer — Requirements</strong><br>
-      Required: CI/CD, Linux, Docker, AWS, Git (50 pts)<br>
-      Preferred: Terraform, Kubernetes, Ansible, Python, Monitoring (20 pts)<br>
-      Experience: 2+ years (20 pts) · Education (10 pts)
-    </div>
+    <div class="requirements" id="jobDescription" style="display:none;"></div>
     <div class="form-group">
       <label for="name">Full Name *</label>
       <input type="text" id="name" placeholder="e.g. Jane Doe">
@@ -92,24 +87,64 @@
   const TENANT_ID = params.get('tenant');
   const JOB_ID = params.get('job');
 
-  // Load the job title so the candidate sees the role they're applying for.
-  (async function loadJob() {
-    const el = document.getElementById('jobTitle');
+  // Load the company branding + the role, so the candidate sees THIS company's
+  // page, not a generic one. Tenant supplies name + brand colour; job supplies
+  // title + description.
+  (async function loadBranding() {
+    const titleEl = document.getElementById('jobTitle');
+    const nameEl = document.getElementById('companyName');
+    const jdEl = document.getElementById('jobDescription');
+
     if (!TENANT_ID || !JOB_ID) {
-      el.textContent = 'Invalid application link (missing company or role).';
-      el.style.color = '#dc2626';
+      nameEl.textContent = 'Invalid link';
+      titleEl.textContent = 'This application link is missing its company or role.';
+      titleEl.style.color = '#dc2626';
       return;
     }
+
+    // Tenant branding
     try {
-      const res = await fetch(`${API_URL}/tenants/${encodeURIComponent(TENANT_ID)}/jobs/${encodeURIComponent(JOB_ID)}`);
-      if (!res.ok) throw new Error('not found');
-      const job = await res.json();
-      el.textContent = job.title;
+      const tRes = await fetch(`${API_URL}/tenants/${encodeURIComponent(TENANT_ID)}`);
+      if (tRes.ok) {
+        const tenant = await tRes.json();
+        nameEl.textContent = tenant.name || TENANT_ID;
+        document.title = `${tenant.name || 'Careers'} — Apply`;
+        // Theme the page with the tenant's brand colour.
+        const c = tenant.brand_color || '#3b82f6';
+        applyBrand(c);
+      } else {
+        nameEl.textContent = TENANT_ID;
+      }
+    } catch (e) { nameEl.textContent = TENANT_ID; }
+
+    // Job title + description
+    try {
+      const jRes = await fetch(`${API_URL}/tenants/${encodeURIComponent(TENANT_ID)}/jobs/${encodeURIComponent(JOB_ID)}`);
+      if (!jRes.ok) throw new Error('not found');
+      const job = await jRes.json();
+      titleEl.textContent = job.title;
+      if (job.job_description) {
+        jdEl.innerHTML = `<strong>About this role</strong><br>${esc(job.job_description)}`;
+        jdEl.style.display = 'block';
+      }
     } catch (e) {
-      el.textContent = 'This role could not be found.';
-      el.style.color = '#dc2626';
+      titleEl.textContent = 'This role could not be found.';
+      titleEl.style.color = '#dc2626';
     }
   })();
+
+  // Recolour the brand accents (heading, button, focus states) to the tenant.
+  function applyBrand(color) {
+    document.getElementById('companyName').style.color = color;
+    const btn = document.querySelector('.btn-submit');
+    if (btn) btn.style.background = color;
+    const style = document.createElement('style');
+    style.textContent = `.file-upload:hover,.file-upload.dragover{border-color:${color} !important;}
+      .form-group input:focus{border-color:${color} !important;}`;
+    document.head.appendChild(style);
+  }
+
+  function esc(s){ if(!s) return ''; const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
 
   const fileInput = document.getElementById('fileInput');
   const fileDrop = document.getElementById('fileDrop');

@@ -56,7 +56,7 @@ CONTENT_TYPES = {
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-tenant-key",
     "Content-Type": "application/json",
 }
 
@@ -70,6 +70,37 @@ class DecimalEncoder(json.JSONEncoder):
 
 def _now():
     return datetime.now(timezone.utc).isoformat()
+
+
+def _tenant_key(event):
+    """Pull the tenant access key from headers (case-insensitive)."""
+    headers = event.get("headers") or {}
+    for k, v in headers.items():
+        if k.lower() == "x-tenant-key":
+            return v
+    return None
+
+
+def verify_tenant_access(event, tenant_id):
+    """
+    Demo-grade gate: the request must carry the tenant's shared access key in
+    the x-tenant-key header. Enforced at the API so hitting the endpoint
+    directly (not just the dashboard UI) still requires the key.
+
+    NOTE: this is a lightweight per-tenant secret for demos, NOT production
+    auth. Step 4 replaces this with a verified Cognito token claim -- the
+    call site stays the same, only this function's body changes.
+    Returns None if OK, or an error response dict if denied.
+    """
+    provided = _tenant_key(event)
+    if not provided:
+        return _resp(401, {"error": "Missing tenant access key"})
+    item = dynamodb.Table(TENANTS_TABLE).get_item(Key={"tenant_id": tenant_id}).get("Item")
+    if not item:
+        return _resp(404, {"error": "Tenant not found"})
+    if provided != item.get("access_key"):
+        return _resp(403, {"error": "Invalid tenant access key"})
+    return None
 
 
 def lambda_handler(event, context):
@@ -151,6 +182,9 @@ def handle_dashboard(event):
     tenant_id = qs.get("tenant_id")
     if not tenant_id:
         return _resp(400, {"error": "tenant_id is required"})
+    denied = verify_tenant_access(event, tenant_id)
+    if denied:
+        return denied
     status = qs.get("status")
     limit = int(qs.get("limit", 20))
     next_token = qs.get("next_token")
@@ -232,12 +266,12 @@ def handle_decision(event):
     if not item:
         return _resp(404, {"error": "Application not found"})
 
-    # Isolation guard: a decision request must target the same tenant that
-    # owns the record. Pre-auth this is a body param; post-auth it's a token
-    # claim. Either way, cross-tenant decisions are refused.
-    caller_tenant = body.get("tenant_id")
-    if caller_tenant and caller_tenant != item.get("tenant_id"):
-        return _resp(403, {"error": "Cross-tenant action refused"})
+    # Key must match the tenant that owns this record. This both authenticates
+    # the recruiter and enforces isolation: you can only act on your own
+    # tenant's candidates.
+    denied = verify_tenant_access(event, item.get("tenant_id"))
+    if denied:
+        return denied
 
     table.update_item(
         Key={"applicant_id": applicant_id},
@@ -299,6 +333,7 @@ def handle_tenant_routes(event, path):
         if not j:
             return _resp(404, {"error": "Job not found"})
         return _resp(200, {"job_id": j["job_id"], "title": j.get("title", jid),
+                           "job_description": j.get("job_description", ""),
                            "tenant_id": tid})
     return _resp(404, {"error": "Not found"})
 
@@ -314,6 +349,9 @@ def handle_create_job(event, path):
     job's criteria are frozen at creation -> consistent, explainable scoring.
     """
     tenant_id = path.strip("/").split("/")[1]
+    denied = verify_tenant_access(event, tenant_id)
+    if denied:
+        return denied
     body = json.loads(event.get("body", "{}"))
     title = (body.get("title") or "").strip()
     jd = (body.get("job_description") or "").strip()

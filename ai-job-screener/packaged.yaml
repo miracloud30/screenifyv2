@@ -1,0 +1,380 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "AI Job Application Screener for Fernwood Systems Ltd. Serverless CV\
+  \ screening: S3 upload -> Textract/PyPDF2 extraction -> Bedrock Claude Haiku 4.5\
+  \ scoring -> DynamoDB -> SES notification.\n"
+Parameters:
+  UploadBucketName:
+    Type: String
+    Default: ai-screener-uploads-834424012688
+  ProcessedBucketName:
+    Type: String
+    Default: ai-screener-processed-834424012688
+  WebsiteBucketName:
+    Type: String
+    Default: ai-screener-website-834424012688
+  SenderEmail:
+    Type: String
+    Default: aturutommy@gmail.com
+  RecipientEmail:
+    Type: String
+    Default: aturutommy@gmail.com
+  BedrockRegion:
+    Type: String
+    Default: us-east-1
+  BedrockModel:
+    Type: String
+    Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+Globals:
+  Function:
+    Runtime: python3.12
+    Timeout: 120
+    MemorySize: 512
+    Tags:
+      aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
+    Environment:
+      Variables:
+        APPLICATIONS_TABLE: screenify-applications
+        TENANTS_TABLE: screenify-tenants
+        JOBS_TABLE: screenify-jobs
+        UPLOAD_BUCKET:
+          Ref: UploadBucketName
+        CV_PROCESSED_BUCKET:
+          Ref: ProcessedBucketName
+        SENDER_EMAIL:
+          Ref: SenderEmail
+        RECIPIENT_EMAIL:
+          Ref: RecipientEmail
+        BEDROCK_REGION:
+          Ref: BedrockRegion
+        TEXTRACT_REGION:
+          Ref: AWS::Region
+        BEDROCK_MODEL:
+          Ref: BedrockModel
+Resources:
+  CVUploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: UploadBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      CorsConfiguration:
+        CorsRules:
+        - AllowedHeaders:
+          - '*'
+          AllowedMethods:
+          - PUT
+          - POST
+          - GET
+          - HEAD
+          AllowedOrigins:
+          - '*'
+          ExposedHeaders:
+          - ETag
+          - x-amz-request-id
+          MaxAge: 3000
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  ProcessedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: ProcessedBucketName
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  WebsiteBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName:
+        Ref: WebsiteBucketName
+      WebsiteConfiguration:
+        IndexDocument: upload.html
+        ErrorDocument: error.html
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: false
+        BlockPublicPolicy: false
+        IgnorePublicAcls: false
+        RestrictPublicBuckets: false
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  WebsiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket:
+        Ref: WebsiteBucket
+      PolicyDocument:
+        Statement:
+        - Sid: PublicReadGetObject
+          Effect: Allow
+          Principal: '*'
+          Action: s3:GetObject
+          Resource:
+            Fn::Sub: ${WebsiteBucket.Arn}/*
+  ApplicationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-applications
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: applicant_id
+        AttributeType: S
+      - AttributeName: tenant_id
+        AttributeType: S
+      - AttributeName: applied_at
+        AttributeType: S
+      KeySchema:
+      - AttributeName: applicant_id
+        KeyType: HASH
+      GlobalSecondaryIndexes:
+      - IndexName: tenant-applied_at-index
+        KeySchema:
+        - AttributeName: tenant_id
+          KeyType: HASH
+        - AttributeName: applied_at
+          KeyType: RANGE
+        Projection:
+          ProjectionType: ALL
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-tenants
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: tenant_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: tenant_id
+        KeyType: HASH
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: screenify-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+      - AttributeName: tenant_id
+        AttributeType: S
+      - AttributeName: job_id
+        AttributeType: S
+      KeySchema:
+      - AttributeName: tenant_id
+        KeyType: HASH
+      - AttributeName: job_id
+        KeyType: RANGE
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  APIHandlerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-api-handler
+      CodeUri: 
+        s3://ai-screener-sam-artifacts-834424012688/621d1ee8650bda5a9d41bbc3f3e0a035
+      Handler: handler.lambda_handler
+      Policies:
+      - S3CrudPolicy:
+          BucketName:
+            Ref: UploadBucketName
+      - DynamoDBCrudPolicy:
+          TableName: screenify-applications
+      - DynamoDBCrudPolicy:
+          TableName: screenify-tenants
+      - DynamoDBCrudPolicy:
+          TableName: screenify-jobs
+      - Statement:
+        - Effect: Allow
+          Action: lambda:InvokeFunction
+          Resource:
+            Fn::Sub: 
+              arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ai-screener-notifier
+      - Statement:
+        - Effect: Allow
+          Action: bedrock:InvokeModel
+          Resource: '*'
+      Events:
+        UploadAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /upload
+            Method: POST
+        DashboardAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /applications
+            Method: GET
+        DecisionAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /applications/{id}/decision
+            Method: POST
+        GetTenantAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}
+            Method: GET
+        ListJobsAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}/jobs
+            Method: GET
+        GetJobAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}/jobs/{jid}
+            Method: GET
+        CreateJobAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}/jobs
+            Method: POST
+  CVProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-cv-processor
+      CodeUri: 
+        s3://ai-screener-sam-artifacts-834424012688/00ca5d5bf82706ead7cf67e9432cab20
+      Handler: handler.lambda_handler
+      Layers:
+      - Ref: DepsLayer
+      Policies:
+      - Statement:
+        - Effect: Allow
+          Action:
+          - s3:GetObject
+          - s3:PutObject
+          - s3:DeleteObject
+          Resource:
+          - Fn::Sub: arn:aws:s3:::${UploadBucketName}/*
+          - Fn::Sub: arn:aws:s3:::${ProcessedBucketName}/*
+        - Effect: Allow
+          Action:
+          - dynamodb:GetItem
+          - dynamodb:PutItem
+          - dynamodb:UpdateItem
+          - dynamodb:Query
+          Resource:
+          - Fn::Sub: 
+              arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-applications
+          - Fn::Sub: 
+              arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-applications/index/*
+          - Fn::Sub: 
+              arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/screenify-jobs
+        - Effect: Allow
+          Action:
+          - textract:DetectDocumentText
+          - textract:AnalyzeDocument
+          - textract:StartDocumentTextDetection
+          - textract:GetDocumentTextDetection
+          Resource: '*'
+        - Effect: Allow
+          Action:
+          - comprehend:DetectEntities
+          - comprehend:DetectKeyPhrases
+          Resource: '*'
+        - Effect: Allow
+          Action: bedrock:InvokeModel
+          Resource: '*'
+        - Effect: Allow
+          Action: lambda:InvokeFunction
+          Resource:
+            Fn::Sub: 
+              arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:ai-screener-notifier
+      Events:
+        CVUploaded:
+          Type: S3
+          Properties:
+            Bucket:
+              Ref: CVUploadsBucket
+            Events: s3:ObjectCreated:*
+            Filter:
+              S3Key:
+                Rules:
+                - Name: prefix
+                  Value: uploads/
+  NotifierFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: ai-screener-notifier
+      CodeUri: 
+        s3://ai-screener-sam-artifacts-834424012688/2a245ad84c3495f5157b65f00f309c48
+      Handler: handler.lambda_handler
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName: screenify-applications
+      - Statement:
+        - Effect: Allow
+          Action:
+          - ses:SendEmail
+          - ses:SendRawEmail
+          Resource: '*'
+  DepsLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: ai-screener-deps
+      ContentUri: 
+        s3://ai-screener-sam-artifacts-834424012688/b1f02fa7b6488364515da1648b45a4d5
+      CompatibleRuntimes:
+      - python3.12
+  ApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      OpenApiVersion: 3.0.0
+      Cors:
+        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
+        AllowOrigin: "'*'"
+      Tags:
+        aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
+Outputs:
+  WebsiteURL:
+    Description: URL for the upload form
+    Value:
+      Fn::GetAtt:
+      - WebsiteBucket
+      - WebsiteURL
+  ApiEndpoint:
+    Description: API Gateway endpoint
+    Value:
+      Fn::Sub: 
+        https://${ApiGateway}.execute-api.${AWS::Region}.amazonaws.com/prod
+  UploadBucket:
+    Value:
+      Ref: UploadBucketName
+  ProcessedBucket:
+    Value:
+      Ref: ProcessedBucketName
+  WebsiteBucket:
+    Value:
+      Ref: WebsiteBucketName

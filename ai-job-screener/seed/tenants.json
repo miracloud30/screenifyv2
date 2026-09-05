@@ -4,13 +4,15 @@
     "name": "Acme Ltd",
     "logo_url": "",
     "brand_color": "#4f46e5",
-    "plan": "pro"
+    "plan": "pro",
+    "access_key": "acme-demo-key"
   },
   {
     "tenant_id": "beta",
     "name": "Beta Industries",
     "logo_url": "",
     "brand_color": "#059669",
-    "plan": "pro"
+    "plan": "pro",
+    "access_key": "beta-demo-key"
   }
 ]
