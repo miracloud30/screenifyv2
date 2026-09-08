@@ -59,6 +59,9 @@ Globals:
         BEDROCK_REGION: !Ref BedrockRegion
         TEXTRACT_REGION: !Ref AWS::Region
         BEDROCK_MODEL: !Ref BedrockModel
+        # Cognito: used by verify_tenant_access to read the token claim.
+        USER_POOL_ID: !Ref RecruiterUserPool
+        COGNITO_CLIENT_ID: !Ref RecruiterUserPoolClient
 
 Resources:
 
@@ -255,12 +258,34 @@ Resources:
               Action: bedrock:InvokeModel
               Resource: '*'
       Events:
+        # PUBLIC — candidates apply without an account.
         UploadAPI:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /upload
             Method: POST
+            Auth:
+              Authorizer: NONE
+        GetTenantAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetJobAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /tenants/{tid}/jobs/{jid}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+
+        # PROTECTED — recruiter routes require a valid Cognito token.
+        # DefaultAuthorizer (CognitoAuth) applies; listed explicitly for clarity.
         DashboardAPI:
           Type: Api
           Properties:
@@ -279,23 +304,11 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /applications/{id}
             Method: DELETE
-        GetTenantAPI:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /tenants/{tid}
-            Method: GET
         ListJobsAPI:
           Type: Api
           Properties:
             RestApiId: !Ref ApiGateway
             Path: /tenants/{tid}/jobs
-            Method: GET
-        GetJobAPI:
-          Type: Api
-          Properties:
-            RestApiId: !Ref ApiGateway
-            Path: /tenants/{tid}/jobs/{jid}
             Method: GET
         CreateJobAPI:
           Type: Api
@@ -372,6 +385,81 @@ Resources:
               Action: [ses:SendEmail, ses:SendRawEmail]
               Resource: '*'
 
+  # ================= COGNITO =================
+  # One shared User Pool for all recruiters across all tenants.
+  # tenant_id is a custom attribute stamped on each user at account creation.
+  # Recruiters cannot self-sign-up — accounts are created by the admin
+  # via AWS CLI or Cognito console (see scripts/deploy-nosam.ps1 for the
+  # create-user command). This is the correct model for a managed SaaS
+  # where Fernwood onboards each client.
+  RecruiterUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: screenify-recruiters
+      # Admin-only account creation: no self-signup.
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        # Temporary password expires after 7 days; admin must set it.
+        UnusedAccountValidityDays: 7
+      UsernameAttributes:
+        - email
+      AutoVerifiedAttributes:
+        - email
+      # Password policy: reasonable minimum for a production tool.
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      # Custom attribute: which company this recruiter belongs to.
+      # Immutable so a recruiter can't change their own tenant.
+      Schema:
+        - Name: tenant_id
+          AttributeDataType: String
+          Mutable: false
+          Required: false
+      # Tokens: access token used for API calls; valid 1 hour.
+      # Refresh token valid 30 days — but we use sessionStorage so the
+      # browser discards tokens when the tab closes anyway.
+      UserPoolAddOns:
+        AdvancedSecurityMode: "OFF"
+      Tags:
+        - Key: aws-apn-id
+          Value: pc:biytoe4tqjehdsa25lc534ba2
+
+  RecruiterUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: screenify-dashboard
+      UserPoolId: !Ref RecruiterUserPool
+      # No client secret: this is a browser-side app (public client).
+      # Client secrets can't be used safely in JavaScript.
+      GenerateSecret: false
+      # Auth flows: SRP (Secure Remote Password) is the standard browser
+      # auth flow. USER_PASSWORD_AUTH is needed for the custom login form
+      # calling cognito-identity-js directly.
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+      # Token validity.
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      # Don't allow users to read/write their own attributes from the
+      # client directly except what we explicitly permit.
+      ReadAttributes:
+        - email
+        - custom:tenant_id
+      WriteAttributes:
+        - email
+
   # ================= LAMBDA LAYER (PyPDF2 + python-docx) =================
   # Dependencies are pre-built into layer/python/ by deploy-nosam.ps1 (pip
   # --target), then packaged by `aws cloudformation package`. No SAM/Docker.
@@ -384,6 +472,9 @@ Resources:
         - python3.12
 
   # ================= API GATEWAY =================
+  # The Cognito authorizer protects recruiter routes.
+  # Candidate-facing routes (upload, get tenant/job) have no authorizer
+  # so candidates can apply without an account.
   ApiGateway:
     Type: AWS::Serverless::Api
     Properties:
@@ -391,8 +482,18 @@ Resources:
       OpenApiVersion: 3.0.0
       Cors:
         AllowMethods: "'POST, GET, DELETE, OPTIONS'"
-        AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
+        AllowHeaders: "'Content-Type, Authorization, x-api-key'"
         AllowOrigin: "'*'"
+      # Native Cognito authorizer: API Gateway verifies the JWT against
+      # the User Pool automatically before the Lambda runs.
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt RecruiterUserPool.Arn
+            Identity:
+              Header: Authorization
       Tags:
         aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
 
@@ -409,3 +510,9 @@ Outputs:
     Value: !Ref ProcessedBucketName
   WebsiteBucket:
     Value: !Ref WebsiteBucketName
+  UserPoolId:
+    Description: Cognito User Pool ID (needed to create recruiter accounts)
+    Value: !Ref RecruiterUserPool
+  UserPoolClientId:
+    Description: Cognito App Client ID (needed by the dashboard login form)
+    Value: !Ref RecruiterUserPoolClient

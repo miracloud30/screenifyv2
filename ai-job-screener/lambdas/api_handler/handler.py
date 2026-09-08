@@ -57,7 +57,7 @@ CONTENT_TYPES = {
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-tenant-key",
+    "Access-Control-Allow-Headers": "Content-Type, x-api-key, Authorization",
     "Content-Type": "application/json",
 }
 
@@ -73,35 +73,40 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def _tenant_key(event):
-    """Pull the tenant access key from headers (case-insensitive)."""
-    headers = event.get("headers") or {}
-    for k, v in headers.items():
-        if k.lower() == "x-tenant-key":
-            return v
-    return None
-
-
-def verify_tenant_access(event, tenant_id):
+def verify_tenant_access(event, tenant_id=None):
     """
-    Demo-grade gate: the request must carry the tenant's shared access key in
-    the x-tenant-key header. Enforced at the API so hitting the endpoint
-    directly (not just the dashboard UI) still requires the key.
+    Reads the recruiter's tenant_id from the verified Cognito token claim.
+    The native Cognito authorizer on API Gateway has already verified the
+    JWT signature and expiry before this Lambda runs -- we just read the
+    claims it passes through in requestContext.authorizer.claims.
 
-    NOTE: this is a lightweight per-tenant secret for demos, NOT production
-    auth. Step 4 replaces this with a verified Cognito token claim -- the
-    call site stays the same, only this function's body changes.
-    Returns None if OK, or an error response dict if denied.
+    If tenant_id is provided (for cross-tenant guard on delete/decision),
+    also checks that the token's tenant matches the record's tenant.
+
+    Returns (recruiter_tenant_id, None) if OK, or (None, error_response)
+    if denied. This replaces the demo key check entirely.
+
+    Step 4 note: this is the single function that changed from the key gate.
+    Everything else -- isolation, routes, data model -- is unchanged.
     """
-    provided = _tenant_key(event)
-    if not provided:
-        return _resp(401, {"error": "Missing tenant access key"})
-    item = dynamodb.Table(TENANTS_TABLE).get_item(Key={"tenant_id": tenant_id}).get("Item")
-    if not item:
-        return _resp(404, {"error": "Tenant not found"})
-    if provided != item.get("access_key"):
-        return _resp(403, {"error": "Invalid tenant access key"})
-    return None
+    try:
+        claims = (
+            event.get("requestContext", {})
+                 .get("authorizer", {})
+                 .get("claims", {})
+        )
+        # Cognito custom attributes are prefixed with 'custom:' in claims.
+        recruiter_tenant = claims.get("custom:tenant_id", "")
+        if not recruiter_tenant:
+            return None, _resp(403, {"error": "Token missing tenant_id claim"})
+        # Cross-tenant guard: if a specific tenant_id was given (from the
+        # record being acted on), the caller's tenant must match it.
+        if tenant_id and recruiter_tenant != tenant_id:
+            return None, _resp(403, {"error": "Cross-tenant action refused"})
+        return recruiter_tenant, None
+    except Exception as e:
+        print(f"Auth error: {e}")
+        return None, _resp(500, {"error": "Auth verification failed"})
 
 
 def lambda_handler(event, context):
@@ -182,13 +187,14 @@ def handle_upload(event):
 
 # ----------------------------- dashboard -------------------------------
 def handle_dashboard(event):
+    # tenant_id comes from the verified Cognito token, not the URL.
+    # This prevents a recruiter from manipulating ?tenant_id= to see
+    # another company's candidates -- the token claim is the authority.
+    recruiter_tenant, err = verify_tenant_access(event)
+    if err:
+        return err
+    tenant_id = recruiter_tenant
     qs = event.get("queryStringParameters") or {}
-    tenant_id = qs.get("tenant_id")
-    if not tenant_id:
-        return _resp(400, {"error": "tenant_id is required"})
-    denied = verify_tenant_access(event, tenant_id)
-    if denied:
-        return denied
     status = qs.get("status")
     limit = int(qs.get("limit", 20))
     next_token = qs.get("next_token")
@@ -270,12 +276,10 @@ def handle_decision(event):
     if not item:
         return _resp(404, {"error": "Application not found"})
 
-    # Key must match the tenant that owns this record. This both authenticates
-    # the recruiter and enforces isolation: you can only act on your own
-    # tenant's candidates.
-    denied = verify_tenant_access(event, item.get("tenant_id"))
-    if denied:
-        return denied
+    # Key must match the tenant that owns this record.
+    _, err = verify_tenant_access(event, item.get("tenant_id"))
+    if err:
+        return err
 
     table.update_item(
         Key={"applicant_id": applicant_id},
@@ -321,9 +325,9 @@ def handle_delete(event, path):
     if not item:
         return _resp(404, {"error": "Application not found"})
 
-    denied = verify_tenant_access(event, item.get("tenant_id"))
-    if denied:
-        return denied
+    _, err = verify_tenant_access(event, item.get("tenant_id"))
+    if err:
+        return err
 
     # 1. Delete the CV file. It was moved to processed/<applicant_id>/<file>
     #    by the CV processor; fall back to the stored key if present.
@@ -396,9 +400,9 @@ def handle_create_job(event, path):
     job's criteria are frozen at creation -> consistent, explainable scoring.
     """
     tenant_id = path.strip("/").split("/")[1]
-    denied = verify_tenant_access(event, tenant_id)
-    if denied:
-        return denied
+    _, err = verify_tenant_access(event, tenant_id)
+    if err:
+        return err
     body = json.loads(event.get("body", "{}"))
     title = (body.get("title") or "").strip()
     jd = (body.get("job_description") or "").strip()

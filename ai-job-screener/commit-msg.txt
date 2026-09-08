@@ -1,0 +1,41 @@
+﻿feat: Cognito auth - real per-user login replacing demo key gate
+
+User Pool:
+- AWS Cognito User Pool (screenify-recruiters) with admin-only account
+  creation, no self-signup
+- custom:tenant_id attribute (immutable) stamped on each recruiter at
+  account creation time, carries company identity in every token
+- App Client with no secret (browser-side public client), SRP + password
+  auth flows, 1hr access token, 30-day refresh token
+
+API Gateway authorizer:
+- Native Cognito authorizer on API Gateway, verifies JWT before Lambda runs
+- Public routes (upload, get tenant/job) explicitly exempt with Auth: NONE
+- Protected routes (dashboard, decisions, delete, job creation) require
+  valid token via DefaultAuthorizer
+
+API handler:
+- verify_tenant_access rewritten: reads custom:tenant_id from
+  requestContext.authorizer.claims instead of checking x-tenant-key header
+- tenant_id now comes from the verified token claim, not the URL param --
+  a recruiter cannot manipulate the query string to see another tenant
+- CORS updated: x-tenant-key replaced with Authorization header
+- All four call sites updated to unpack the new (tenant_id, error) tuple
+
+Dashboard:
+- Login form replaces the key prompt, uses amazon-cognito-identity-js SDK
+- SRP authentication, ID token in sessionStorage (gone on tab close)
+- newPasswordRequired flow: first login after admin creates account
+  prompts for permanent password before entering the dashboard
+- Authorization: Bearer <token> header on every API request
+- Sign out clears sessionStorage and calls Cognito signOut
+- tenant query param removed: identity comes from the token, not the URL
+
+Deploy script:
+- Reads UserPoolId and UserPoolClientId from stack outputs
+- Injects both into dashboard at publish time alongside the API URL
+- Prints the admin-create-user command with real pool ID after deploy
+
+Note: the demo key gate (x-tenant-key, access_key in tenants table) is
+fully removed. The single swap was verify_tenant_access -- everything
+else, isolation, routes, data model, unchanged.

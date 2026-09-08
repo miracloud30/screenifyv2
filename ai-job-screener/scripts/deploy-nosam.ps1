@@ -84,8 +84,12 @@ function Get-Output($key) {
 $apiUrl     = Get-Output "ApiEndpoint"
 $websiteUrl = Get-Output "WebsiteURL"
 $websiteBkt = Get-Output "WebsiteBucket"
-Write-Host "  API:     $apiUrl" -ForegroundColor Green
-Write-Host "  Website: $websiteUrl" -ForegroundColor Green
+$userPoolId = Get-Output "UserPoolId"
+$clientId   = Get-Output "UserPoolClientId"
+Write-Host "  API:         $apiUrl" -ForegroundColor Green
+Write-Host "  Website:     $websiteUrl" -ForegroundColor Green
+Write-Host "  User Pool:   $userPoolId" -ForegroundColor Green
+Write-Host "  Client ID:   $clientId" -ForegroundColor Green
 
 # 6. Seed tenants + jobs.
 Write-Host "[6/7] Seeding tenants and jobs..." -ForegroundColor Yellow
@@ -96,7 +100,11 @@ Assert-LastExit "seed"
 Write-Host "[7/7] Publishing frontend..." -ForegroundColor Yellow
 New-Item -ItemType Directory -Path "frontend/dist" -Force | Out-Null
 (Get-Content frontend/upload.html -Raw)    -replace "REPLACE_WITH_API_URL", $apiUrl | Set-Content frontend/dist/upload.html -NoNewline
-(Get-Content frontend/dashboard.html -Raw) -replace "REPLACE_WITH_API_URL", $apiUrl | Set-Content frontend/dist/dashboard.html -NoNewline
+# Dashboard: inject API URL + Cognito pool/client IDs
+(Get-Content frontend/dashboard.html -Raw) `
+    -replace "REPLACE_WITH_API_URL", $apiUrl `
+    -replace "REPLACE_WITH_USER_POOL_ID", $userPoolId `
+    -replace "REPLACE_WITH_CLIENT_ID", $clientId | Set-Content frontend/dist/dashboard.html -NoNewline
 "<!DOCTYPE html><html><body><h1>Not found</h1><p><a href='upload.html'>Application form</a></p></body></html>" | Set-Content frontend/dist/error.html -NoNewline
 aws s3 cp frontend/dist/upload.html    "s3://$websiteBkt/upload.html"    --content-type "text/html" --region $Region | Out-Null
 aws s3 cp frontend/dist/dashboard.html "s3://$websiteBkt/dashboard.html" --content-type "text/html" --region $Region | Out-Null
@@ -106,12 +114,24 @@ Write-Host "  published" -ForegroundColor Green
 Write-Host "`n=== DEPLOY COMPLETE (no SAM) ===" -ForegroundColor Cyan
 Write-Host @"
 
+Dashboard : $websiteUrl/dashboard.html
+API       : $apiUrl
+
+TO CREATE A RECRUITER ACCOUNT (admin action):
+  Replace the values below and run in PowerShell:
+
+  aws cognito-idp admin-create-user ``
+    --user-pool-id $userPoolId ``
+    --username recruiter@acme.com ``
+    --user-attributes Name=email,Value=recruiter@acme.com Name=email_verified,Value=true ``
+      "Name=custom:tenant_id,Value=acme" ``
+    --temporary-password "Welcome1!" ``
+    --region $Region
+
+  The recruiter receives an email with the temporary password.
+  On first login they set their permanent password.
+  Change 'recruiter@acme.com' and 'acme' for each new recruiter.
+
 Apply (Acme DevOps): $websiteUrl/upload.html?tenant=acme&job=devops-engineer
 Apply (Beta Mktg)  : $websiteUrl/upload.html?tenant=beta&job=marketing-manager
-Dashboard (Acme)   : $websiteUrl/dashboard.html?tenant=acme
-Dashboard (Beta)   : $websiteUrl/dashboard.html?tenant=beta
-API                : $apiUrl
-
-Isolation test: apply to both, open both dashboards, confirm neither shows
-the other's candidates.
 "@ -ForegroundColor Gray
