@@ -421,10 +421,7 @@ Resources:
           Mutable: false
           Required: false
       # Tokens: access token used for API calls; valid 1 hour.
-      # Refresh token valid 30 days — but we use sessionStorage so the
-      # browser discards tokens when the tab closes anyway.
-      UserPoolAddOns:
-        AdvancedSecurityMode: "OFF"
+      # Refresh token valid 30 days -- sessionStorage discards on tab close.
       Tags:
         - Key: aws-apn-id
           Value: pc:biytoe4tqjehdsa25lc534ba2

@@ -55,6 +55,10 @@ Globals:
           Ref: AWS::Region
         BEDROCK_MODEL:
           Ref: BedrockModel
+        USER_POOL_ID:
+          Ref: RecruiterUserPool
+        COGNITO_CLIENT_ID:
+          Ref: RecruiterUserPoolClient
 Resources:
   CVUploadsBucket:
     Type: AWS::S3::Bucket
@@ -217,7 +221,7 @@ Resources:
     Properties:
       FunctionName: ai-screener-api-handler
       CodeUri: 
-        s3://ai-screener-sam-artifacts-834424012688/37963e7eeaaf50bfef130ad38cfcec34
+        s3://ai-screener-sam-artifacts-834424012688/4d2ade910a9d59b2662cc43e32b81d1e
       Handler: handler.lambda_handler
       Policies:
       - S3CrudPolicy:
@@ -250,6 +254,26 @@ Resources:
               Ref: ApiGateway
             Path: /upload
             Method: POST
+            Auth:
+              Authorizer: NONE
+        GetTenantAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}
+            Method: GET
+            Auth:
+              Authorizer: NONE
+        GetJobAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /tenants/{tid}/jobs/{jid}
+            Method: GET
+            Auth:
+              Authorizer: NONE
         DashboardAPI:
           Type: Api
           Properties:
@@ -271,26 +295,12 @@ Resources:
               Ref: ApiGateway
             Path: /applications/{id}
             Method: DELETE
-        GetTenantAPI:
-          Type: Api
-          Properties:
-            RestApiId:
-              Ref: ApiGateway
-            Path: /tenants/{tid}
-            Method: GET
         ListJobsAPI:
           Type: Api
           Properties:
             RestApiId:
               Ref: ApiGateway
             Path: /tenants/{tid}/jobs
-            Method: GET
-        GetJobAPI:
-          Type: Api
-          Properties:
-            RestApiId:
-              Ref: ApiGateway
-            Path: /tenants/{tid}/jobs/{jid}
             Method: GET
         CreateJobAPI:
           Type: Api
@@ -379,12 +389,63 @@ Resources:
           - ses:SendEmail
           - ses:SendRawEmail
           Resource: '*'
+  RecruiterUserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: screenify-recruiters
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        UnusedAccountValidityDays: 7
+      UsernameAttributes:
+      - email
+      AutoVerifiedAttributes:
+      - email
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+      - Name: tenant_id
+        AttributeDataType: String
+        Mutable: false
+        Required: false
+      UserPoolAddOns:
+        AdvancedSecurityMode: 'OFF'
+      Tags:
+      - Key: aws-apn-id
+        Value: pc:biytoe4tqjehdsa25lc534ba2
+  RecruiterUserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: screenify-dashboard
+      UserPoolId:
+        Ref: RecruiterUserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+      - ALLOW_USER_SRP_AUTH
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+      AccessTokenValidity: 1
+      IdTokenValidity: 1
+      RefreshTokenValidity: 30
+      TokenValidityUnits:
+        AccessToken: hours
+        IdToken: hours
+        RefreshToken: days
+      ReadAttributes:
+      - email
+      - custom:tenant_id
+      WriteAttributes:
+      - email
   DepsLayer:
     Type: AWS::Serverless::LayerVersion
     Properties:
       LayerName: ai-screener-deps
       ContentUri: 
-        s3://ai-screener-sam-artifacts-834424012688/4ba6a9ffeab16a9ff1368f3daa958133
+        s3://ai-screener-sam-artifacts-834424012688/92949e2d698920ba9cc3e7b0d05e6ca5
       CompatibleRuntimes:
       - python3.12
   ApiGateway:
@@ -394,8 +455,19 @@ Resources:
       OpenApiVersion: 3.0.0
       Cors:
         AllowMethods: "'POST, GET, DELETE, OPTIONS'"
-        AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
+        AllowHeaders: "'Content-Type, Authorization, x-api-key'"
         AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn:
+              Fn::GetAtt:
+              - RecruiterUserPool
+              - Arn
+            Identity:
+              Header: Authorization
       Tags:
         aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
 Outputs:
@@ -419,3 +491,11 @@ Outputs:
   WebsiteBucket:
     Value:
       Ref: WebsiteBucketName
+  UserPoolId:
+    Description: Cognito User Pool ID (needed to create recruiter accounts)
+    Value:
+      Ref: RecruiterUserPool
+  UserPoolClientId:
+    Description: Cognito App Client ID (needed by the dashboard login form)
+    Value:
+      Ref: RecruiterUserPoolClient
