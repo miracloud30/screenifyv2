@@ -399,8 +399,6 @@ Resources:
       # Admin-only account creation: no self-signup.
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
-        # Temporary password expires after 7 days; admin must set it.
-        UnusedAccountValidityDays: 7
       UsernameAttributes:
         - email
       AutoVerifiedAttributes:
@@ -413,6 +411,8 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: false
+          # Temporary password expires after 7 days (correct modern property).
+          TemporaryPasswordValidityDays: 7
       # Custom attribute: which company this recruiter belongs to.
       # Immutable so a recruiter can't change their own tenant.
       Schema:
@@ -420,11 +420,10 @@ Resources:
           AttributeDataType: String
           Mutable: false
           Required: false
-      # Tokens: access token used for API calls; valid 1 hour.
-      # Refresh token valid 30 days -- sessionStorage discards on tab close.
-      Tags:
-        - Key: aws-apn-id
-          Value: pc:biytoe4tqjehdsa25lc534ba2
+      # UserPoolTags is the correct property name for User Pool tags
+      # (not Tags, which is what most other resources use).
+      UserPoolTags:
+        aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
 
   RecruiterUserPoolClient:
     Type: AWS::Cognito::UserPoolClient

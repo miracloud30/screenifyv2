@@ -412,8 +412,6 @@ Resources:
         AttributeDataType: String
         Mutable: false
         Required: false
-      UserPoolAddOns:
-        AdvancedSecurityMode: 'OFF'
       Tags:
       - Key: aws-apn-id
         Value: pc:biytoe4tqjehdsa25lc534ba2
@@ -445,7 +443,7 @@ Resources:
     Properties:
       LayerName: ai-screener-deps
       ContentUri: 
-        s3://ai-screener-sam-artifacts-834424012688/92949e2d698920ba9cc3e7b0d05e6ca5
+        s3://ai-screener-sam-artifacts-834424012688/ac93688ec1bcdd551e3953599f23f681
       CompatibleRuntimes:
       - python3.12
   ApiGateway:
