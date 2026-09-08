@@ -37,6 +37,7 @@ APPLICATIONS_TABLE = os.environ["APPLICATIONS_TABLE"]
 TENANTS_TABLE = os.environ["TENANTS_TABLE"]
 JOBS_TABLE = os.environ["JOBS_TABLE"]
 UPLOAD_BUCKET = os.environ.get("UPLOAD_BUCKET", "")
+PROCESSED_BUCKET = os.environ.get("CV_PROCESSED_BUCKET", "")
 BEDROCK_MODEL = os.environ.get(
     "BEDROCK_MODEL", "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 )
@@ -55,7 +56,7 @@ CONTENT_TYPES = {
 
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Methods": "POST, GET, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, x-api-key, x-tenant-key",
     "Content-Type": "application/json",
 }
@@ -116,6 +117,9 @@ def lambda_handler(event, context):
             return handle_dashboard(event)
         if method == "POST" and path.startswith("/applications/") and path.endswith("/decision"):
             return handle_decision(event)
+        # Hard-delete a candidate: record + CV file. Recruiter-triggered, key-gated.
+        if method == "DELETE" and re.match(r"^/applications/[^/]+$", path):
+            return handle_delete(event, path)
         # Create a job from a pasted JD (generates rubric under the hood).
         if method == "POST" and re.match(r"^/tenants/[^/]+/jobs$", path):
             return handle_create_job(event, path)
@@ -300,6 +304,49 @@ def handle_decision(event):
 
     return _resp(200, {"applicant_id": applicant_id, "status": new_status,
                        "emailed": decision != "hold"})
+
+
+# ------------------------------- delete --------------------------------
+def handle_delete(event, path):
+    """
+    Hard-delete a candidate: the CV file in S3 AND the DynamoDB record.
+    Recruiter-triggered, key-gated to the record's tenant. Permanent.
+
+    Deleting the record without the file would leave the candidate's CV
+    document sitting in S3, so both go -- file first, then record.
+    """
+    applicant_id = path.strip("/").split("/")[1]
+    table = dynamodb.Table(APPLICATIONS_TABLE)
+    item = table.get_item(Key={"applicant_id": applicant_id}).get("Item")
+    if not item:
+        return _resp(404, {"error": "Application not found"})
+
+    denied = verify_tenant_access(event, item.get("tenant_id"))
+    if denied:
+        return denied
+
+    # 1. Delete the CV file. It was moved to processed/<applicant_id>/<file>
+    #    by the CV processor; fall back to the stored key if present.
+    deleted_file = False
+    try:
+        filename = item.get("cv_filename", "")
+        if PROCESSED_BUCKET and filename:
+            s3_client.delete_object(
+                Bucket=PROCESSED_BUCKET,
+                Key=f"processed/{applicant_id}/{filename}",
+            )
+            deleted_file = True
+        # Also clear any un-processed original still in the uploads bucket.
+        if UPLOAD_BUCKET and item.get("cv_s3_key"):
+            s3_client.delete_object(Bucket=UPLOAD_BUCKET, Key=item["cv_s3_key"])
+    except Exception as e:
+        # Don't abort the record deletion if the file is already gone.
+        print(f"CV file delete warning for {applicant_id}: {e}")
+
+    # 2. Delete the record.
+    table.delete_item(Key={"applicant_id": applicant_id})
+    print(f"Hard-deleted {applicant_id} (file removed: {deleted_file})")
+    return _resp(200, {"applicant_id": applicant_id, "deleted": True})
 
 
 # --------------------------- tenant/job reads --------------------------

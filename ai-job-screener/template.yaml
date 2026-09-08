@@ -34,6 +34,10 @@ Parameters:
   BedrockModel:
     Type: String
     Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  RetentionDays:
+    Type: Number
+    Default: 180
+    Description: Days to retain processed CVs before automatic deletion.
 
 Globals:
   Function:
@@ -63,11 +67,24 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref UploadBucketName
+      # Encrypt all CV files at rest (SSE-S3 / AES-256).
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      # Raw uploads are transient: the processor moves them to the processed
+      # bucket within seconds. Expire any stragglers after 1 day.
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-raw-uploads
+            Status: Enabled
+            Prefix: uploads/
+            ExpirationInDays: 1
       CorsConfiguration:
         CorsRules:
           - AllowedHeaders: ['*']
@@ -83,11 +100,23 @@ Resources:
     Type: AWS::S3::Bucket
     Properties:
       BucketName: !Ref ProcessedBucketName
+      # Encrypt processed CVs at rest (SSE-S3 / AES-256).
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      # Retention: processed CVs auto-expire after RETENTION_DAYS.
+      LifecycleConfiguration:
+        Rules:
+          - Id: expire-processed-cvs
+            Status: Enabled
+            Prefix: processed/
+            ExpirationInDays: !Ref RetentionDays
       Tags:
         - Key: aws-apn-id
           Value: pc:biytoe4tqjehdsa25lc534ba2
@@ -131,6 +160,8 @@ Resources:
     Properties:
       TableName: screenify-applications
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: applicant_id
           AttributeType: S
@@ -162,6 +193,8 @@ Resources:
     Properties:
       TableName: screenify-tenants
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: tenant_id
           AttributeType: S
@@ -179,6 +212,8 @@ Resources:
     Properties:
       TableName: screenify-jobs
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
         - AttributeName: tenant_id
           AttributeType: S
@@ -203,6 +238,8 @@ Resources:
       Policies:
         - S3CrudPolicy:
             BucketName: !Ref UploadBucketName
+        - S3CrudPolicy:
+            BucketName: !Ref ProcessedBucketName
         - DynamoDBCrudPolicy:
             TableName: screenify-applications
         - DynamoDBCrudPolicy:
@@ -236,6 +273,12 @@ Resources:
             RestApiId: !Ref ApiGateway
             Path: /applications/{id}/decision
             Method: POST
+        DeleteAPI:
+          Type: Api
+          Properties:
+            RestApiId: !Ref ApiGateway
+            Path: /applications/{id}
+            Method: DELETE
         GetTenantAPI:
           Type: Api
           Properties:
@@ -347,7 +390,7 @@ Resources:
       StageName: prod
       OpenApiVersion: 3.0.0
       Cors:
-        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowMethods: "'POST, GET, DELETE, OPTIONS'"
         AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
         AllowOrigin: "'*'"
       Tags:

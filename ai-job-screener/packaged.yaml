@@ -25,6 +25,10 @@ Parameters:
   BedrockModel:
     Type: String
     Default: us.anthropic.claude-haiku-4-5-20251001-v1:0
+  RetentionDays:
+    Type: Number
+    Default: 180
+    Description: Days to retain processed CVs before automatic deletion.
 Globals:
   Function:
     Runtime: python3.12
@@ -57,11 +61,21 @@ Resources:
     Properties:
       BucketName:
         Ref: UploadBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+        - Id: expire-raw-uploads
+          Status: Enabled
+          Prefix: uploads/
+          ExpirationInDays: 1
       CorsConfiguration:
         CorsRules:
         - AllowedHeaders:
@@ -85,11 +99,22 @@ Resources:
     Properties:
       BucketName:
         Ref: ProcessedBucketName
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: AES256
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+        - Id: expire-processed-cvs
+          Status: Enabled
+          Prefix: processed/
+          ExpirationInDays:
+            Ref: RetentionDays
       Tags:
       - Key: aws-apn-id
         Value: pc:biytoe4tqjehdsa25lc534ba2
@@ -127,6 +152,8 @@ Resources:
     Properties:
       TableName: screenify-applications
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
       - AttributeName: applicant_id
         AttributeType: S
@@ -154,6 +181,8 @@ Resources:
     Properties:
       TableName: screenify-tenants
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
       - AttributeName: tenant_id
         AttributeType: S
@@ -168,6 +197,8 @@ Resources:
     Properties:
       TableName: screenify-jobs
       BillingMode: PAY_PER_REQUEST
+      SSESpecification:
+        SSEEnabled: true
       AttributeDefinitions:
       - AttributeName: tenant_id
         AttributeType: S
@@ -186,12 +217,15 @@ Resources:
     Properties:
       FunctionName: ai-screener-api-handler
       CodeUri: 
-        s3://ai-screener-sam-artifacts-834424012688/621d1ee8650bda5a9d41bbc3f3e0a035
+        s3://ai-screener-sam-artifacts-834424012688/37963e7eeaaf50bfef130ad38cfcec34
       Handler: handler.lambda_handler
       Policies:
       - S3CrudPolicy:
           BucketName:
             Ref: UploadBucketName
+      - S3CrudPolicy:
+          BucketName:
+            Ref: ProcessedBucketName
       - DynamoDBCrudPolicy:
           TableName: screenify-applications
       - DynamoDBCrudPolicy:
@@ -230,6 +264,13 @@ Resources:
               Ref: ApiGateway
             Path: /applications/{id}/decision
             Method: POST
+        DeleteAPI:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: ApiGateway
+            Path: /applications/{id}
+            Method: DELETE
         GetTenantAPI:
           Type: Api
           Properties:
@@ -343,7 +384,7 @@ Resources:
     Properties:
       LayerName: ai-screener-deps
       ContentUri: 
-        s3://ai-screener-sam-artifacts-834424012688/b1f02fa7b6488364515da1648b45a4d5
+        s3://ai-screener-sam-artifacts-834424012688/4ba6a9ffeab16a9ff1368f3daa958133
       CompatibleRuntimes:
       - python3.12
   ApiGateway:
@@ -352,7 +393,7 @@ Resources:
       StageName: prod
       OpenApiVersion: 3.0.0
       Cors:
-        AllowMethods: "'POST, GET, OPTIONS'"
+        AllowMethods: "'POST, GET, DELETE, OPTIONS'"
         AllowHeaders: "'Content-Type, x-api-key, x-tenant-key'"
         AllowOrigin: "'*'"
       Tags:

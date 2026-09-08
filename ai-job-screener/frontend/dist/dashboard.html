@@ -64,6 +64,8 @@
   .actions { display: flex; gap: 8px; margin-top: 14px; flex-wrap: wrap; border-top: 1px solid #f1f5f9; padding-top: 14px; }
   .action-btn { padding: 8px 16px; border-radius: 8px; border: none; cursor: pointer; font-size: 13px; font-weight: 600; transition: all 0.15s; }
   .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .del-link { background: none; border: none; color: #94a3b8; font-size: 12px; cursor: pointer; text-decoration: underline; padding: 0; }
+  .del-link:hover { color: #dc2626; }
   .act-shortlist { background: #ecfdf5; color: #059669; } .act-shortlist:hover:not(:disabled) { background: #059669; color: #fff; }
   .act-interview { background: #ecfeff; color: #0891b2; } .act-interview:hover:not(:disabled) { background: #0891b2; color: #fff; }
   .act-reject { background: #fef2f2; color: #dc2626; } .act-reject:hover:not(:disabled) { background: #dc2626; color: #fff; }
@@ -260,6 +262,9 @@
       <div class="summary collapsed" id="${summaryId}">${esc(app.summary || '')}</div>
       ${(app.summary || '').length > 140 ? `<button class="more-btn" onclick="toggleSummary('${summaryId}', this)">Show more</button>` : ''}
       ${decided ? renderDecided(app) : renderActions(app)}
+      <div style="margin-top:10px;text-align:right;">
+        <button class="del-link" onclick="askDelete('${esc(app.applicant_id)}','${esc(app.name)}')">Delete candidate &amp; CV</button>
+      </div>
     `;
     return card;
   }
@@ -289,28 +294,45 @@
   };
 
   function askDecision(id, name, decision) {
-    pending = { id, decision };
+    pending = { kind: 'decision', id, decision };
     const [title, body] = DECISION_COPY[decision];
     document.getElementById('modalTitle').textContent = title;
     document.getElementById('modalBody').textContent = `${name}: ${body}`;
     document.getElementById('modalBg').classList.add('show');
   }
+
+  function askDelete(id, name) {
+    pending = { kind: 'delete', id };
+    document.getElementById('modalTitle').textContent = 'Delete this candidate?';
+    document.getElementById('modalBody').textContent =
+      `${name}: their application record and CV file will be permanently deleted. This cannot be undone.`;
+    document.getElementById('modalBg').classList.add('show');
+  }
+
   function closeModal() { document.getElementById('modalBg').classList.remove('show'); pending = null; }
 
   document.getElementById('modalConfirm').addEventListener('click', async () => {
     if (!pending) return;
-    const { id, decision } = pending;
     const btn = document.getElementById('modalConfirm');
     btn.disabled = true; btn.textContent = 'Working...';
     try {
-      const res = await fetch(`${API_URL}/applications/${encodeURIComponent(id)}/decision`, {
-        method: 'POST',
-        headers: authHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ decision, tenant_id: TENANT_ID })
-      });
-      if (!res.ok) throw new Error('Decision failed');
-      const data = await res.json();
-      showToast(data.emailed ? 'Decision saved and candidate emailed.' : 'Decision saved.');
+      if (pending.kind === 'delete') {
+        const res = await fetch(`${API_URL}/applications/${encodeURIComponent(pending.id)}`, {
+          method: 'DELETE',
+          headers: authHeaders()
+        });
+        if (!res.ok) throw new Error('Delete failed');
+        showToast('Candidate and CV permanently deleted.');
+      } else {
+        const res = await fetch(`${API_URL}/applications/${encodeURIComponent(pending.id)}/decision`, {
+          method: 'POST',
+          headers: authHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ decision: pending.decision, tenant_id: TENANT_ID })
+        });
+        if (!res.ok) throw new Error('Decision failed');
+        const data = await res.json();
+        showToast(data.emailed ? 'Decision saved and candidate emailed.' : 'Decision saved.');
+      }
       closeModal();
       loadApplications();
     } catch (e) {
