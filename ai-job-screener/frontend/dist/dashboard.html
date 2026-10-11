@@ -3,7 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Recruiter Dashboard — Fernwood Systems</title>
+<title>Recruiter Dashboard — Screenify</title>
+<!-- Cognito SDK: handles SRP auth, token management, refresh -->
+<script src="https://cdn.jsdelivr.net/npm/amazon-cognito-identity-js@6/dist/amazon-cognito-identity.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f1f5f9; padding: 24px; color: #1e293b; }
@@ -98,6 +100,7 @@
         <div class="subtitle">AI triages · you decide · candidates are emailed on your action</div>
       </div>
       <button class="refresh-btn" onclick="loadApplications()">Refresh</button>
+      <button class="refresh-btn" style="background:#475569;" onclick="signOut()">Sign out</button>
     </div>
     <div class="stats">
       <div class="stat-card total"><div class="number" id="s-total">0</div><div class="label">Total</div></div>
@@ -137,41 +140,168 @@
 
 <script>
   const API_URL = 'https://mtncpqy4o6.execute-api.eu-north-1.amazonaws.com/prod';
-  // Multi-tenant: dashboard is scoped to one company, e.g. dashboard.html?tenant=acme
-  // (Step 4 replaces this URL param + key with a real Cognito session.)
-  const TENANT_ID = new URLSearchParams(window.location.search).get('tenant');
-  // Demo gate: the tenant access key, held only in memory for the session.
-  let TENANT_KEY = sessionStorage.getItem('screenify_key_' + TENANT_ID) || null;
+  const COGNITO_USER_POOL_ID = 'eu-north-1_OmGNDqlzQ';
+  const COGNITO_CLIENT_ID = 'thcq8lg8ds01vtpho1j8psatj';
+
+  // ---- Cognito setup ----
+  const poolData = {
+    UserPoolId: COGNITO_USER_POOL_ID,
+    ClientId: COGNITO_CLIENT_ID,
+  };
+  const userPool = new AmazonCognitoIdentity.CognitoUserPool(poolData);
+
+  // Token storage: sessionStorage only -- gone when tab closes.
+  function getToken() { return sessionStorage.getItem('screenify_id_token'); }
+  function getTenantId() { return sessionStorage.getItem('screenify_tenant_id'); }
+
+  function storeSession(idToken, tenantId) {
+    sessionStorage.setItem('screenify_id_token', idToken);
+    sessionStorage.setItem('screenify_tenant_id', tenantId);
+  }
+
+  function clearSession() {
+    sessionStorage.removeItem('screenify_id_token');
+    sessionStorage.removeItem('screenify_tenant_id');
+    const user = userPool.getCurrentUser();
+    if (user) user.signOut();
+  }
 
   function authHeaders(extra) {
     const h = extra || {};
-    if (TENANT_KEY) h['x-tenant-key'] = TENANT_KEY;
+    const token = getToken();
+    if (token) h['Authorization'] = `Bearer ${token}`;
     return h;
   }
 
-  function promptForKey(msg) {
+  // ---- Login form ----
+  function showLogin(msg) {
     const cards = document.getElementById('cards');
     const loading = document.getElementById('loading');
     loading.style.display = 'none';
     cards.innerHTML = `
-      <div style="max-width:400px;margin:40px auto;background:#fff;padding:28px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.08);text-align:center;">
-        <h3 style="color:#1e3a5f;margin-bottom:8px;">Recruiter sign-in</h3>
-        <p style="color:#64748b;font-size:14px;margin-bottom:16px;">${msg || 'Enter your access key for <b>' + esc(TENANT_ID || '') + '</b>.'}</p>
-        <input id="keyInput" type="password" placeholder="Access key" style="width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:9px;font-size:14px;margin-bottom:12px;" />
-        <button onclick="submitKey()" style="width:100%;padding:11px;background:#3b82f6;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;">Open dashboard</button>
+      <div style="max-width:380px;margin:60px auto;background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,0.1);">
+        <div style="text-align:center;margin-bottom:24px;">
+          <div style="font-size:28px;margin-bottom:8px;">🔐</div>
+          <h2 style="color:#1e3a5f;font-size:20px;">Recruiter sign in</h2>
+          <p style="color:#64748b;font-size:13px;margin-top:4px;">Screenify Dashboard</p>
+        </div>
+        ${msg ? `<div style="background:#fef2f2;color:#dc2626;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:16px;">${msg}</div>` : ''}
+        <div style="margin-bottom:14px;">
+          <label style="display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:5px;">Email</label>
+          <input id="loginEmail" type="email" placeholder="you@company.com"
+            style="width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:9px;font-size:14px;" />
+        </div>
+        <div style="margin-bottom:20px;">
+          <label style="display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:5px;">Password</label>
+          <input id="loginPassword" type="password" placeholder="••••••••"
+            style="width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:9px;font-size:14px;" />
+        </div>
+        <button id="loginBtn" onclick="doLogin()"
+          style="width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;">
+          Sign in
+        </button>
       </div>`;
-    const inp = document.getElementById('keyInput');
-    inp.focus();
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') submitKey(); });
+    const emailEl = document.getElementById('loginEmail');
+    const passEl = document.getElementById('loginPassword');
+    if (emailEl) emailEl.focus();
+    [emailEl, passEl].forEach(el => {
+      if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+    });
   }
 
-  window.submitKey = function () {
-    const val = document.getElementById('keyInput').value.trim();
-    if (!val) return;
-    TENANT_KEY = val;
-    sessionStorage.setItem('screenify_key_' + TENANT_ID, val);
+  // ---- New password required (first login after admin creates account) ----
+  function showNewPassword(cognitoUser) {
+    const cards = document.getElementById('cards');
+    document.getElementById('loading').style.display = 'none';
+    cards.innerHTML = `
+      <div style="max-width:380px;margin:60px auto;background:#fff;padding:32px;border-radius:14px;box-shadow:0 4px 24px rgba(0,0,0,0.1);">
+        <h2 style="color:#1e3a5f;font-size:20px;margin-bottom:8px;">Set your password</h2>
+        <p style="color:#64748b;font-size:13px;margin-bottom:20px;">Choose a permanent password to continue.</p>
+        <div style="margin-bottom:14px;">
+          <label style="display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:5px;">New password</label>
+          <input id="newPass" type="password" placeholder="Min 8 chars, upper + lower + number"
+            style="width:100%;padding:11px 14px;border:2px solid #e2e8f0;border-radius:9px;font-size:14px;" />
+        </div>
+        <button onclick="doSetPassword(this, '${cognitoUser.getUsername()}')"
+          style="width:100%;padding:12px;background:#3b82f6;color:#fff;border:none;border-radius:9px;font-size:15px;font-weight:600;cursor:pointer;">
+          Set password
+        </button>
+        <div id="npError" style="margin-top:12px;color:#dc2626;font-size:13px;"></div>
+      </div>`;
+    // Store cognitoUser reference for the set-password call
+    window._pendingCognitoUser = cognitoUser;
+  }
+
+  function doSetPassword(btn, username) {
+    const newPass = document.getElementById('newPass').value;
+    const errEl = document.getElementById('npError');
+    if (!newPass) { errEl.textContent = 'Please enter a new password.'; return; }
+    btn.disabled = true; btn.textContent = 'Setting...';
+    window._pendingCognitoUser.completeNewPasswordChallenge(newPass, {}, {
+      onSuccess: session => { handleSession(session); },
+      onFailure: err => {
+        errEl.textContent = err.message || 'Failed to set password.';
+        btn.disabled = false; btn.textContent = 'Set password';
+      }
+    });
+  }
+
+  function doLogin() {
+    const email = (document.getElementById('loginEmail')?.value || '').trim();
+    const password = document.getElementById('loginPassword')?.value || '';
+    if (!email || !password) { showLogin('Please enter your email and password.'); return; }
+    const btn = document.getElementById('loginBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Signing in...'; }
+
+    const authDetails = new AmazonCognitoIdentity.AuthenticationDetails({
+      Username: email, Password: password
+    });
+    const cognitoUser = new AmazonCognitoIdentity.CognitoUser({
+      Username: email, Pool: userPool
+    });
+    cognitoUser.authenticateUser(authDetails, {
+      onSuccess: session => { handleSession(session); },
+      onFailure: err => {
+        const msg = err.code === 'NotAuthorizedException' ? 'Incorrect email or password.' :
+                    err.code === 'UserNotFoundException' ? 'No account found for this email.' :
+                    err.message || 'Sign in failed.';
+        showLogin(msg);
+      },
+      newPasswordRequired: (userAttributes) => {
+        // First login after admin creates account: must set a permanent password.
+        showNewPassword(cognitoUser);
+      }
+    });
+  }
+
+  function handleSession(session) {
+    const idToken = session.getIdToken();
+    const payload = idToken.decodePayload();
+    const tenantId = payload['custom:tenant_id'];
+    if (!tenantId) {
+      showLogin('Your account has no company assigned. Contact your administrator.');
+      return;
+    }
+    storeSession(idToken.getJwtToken(), tenantId);
     loadApplications();
-  };
+  }
+
+  function signOut() {
+    clearSession();
+    showLogin();
+  }
+
+  // ---- Boot: check for existing session ----
+  (function boot() {
+    const token = getToken();
+    if (token) {
+      // Token exists in sessionStorage: try to use it. If the API returns 401
+      // the load function will clear it and show the login form.
+      loadApplications();
+    } else {
+      showLogin();
+    }
+  })();
   const DECIDED = ['shortlisted','interview','rejected','on_hold'];
 
   let currentFilter = 'all';
@@ -191,23 +321,17 @@
   async function loadApplications() {
     const loading = document.getElementById('loading');
     const cards = document.getElementById('cards');
-    if (!TENANT_ID) {
-      loading.style.display = 'block';
-      loading.textContent = 'No company selected. Add ?tenant=acme (or ?tenant=beta) to the URL.';
-      cards.innerHTML = '';
-      return;
-    }
-    if (!TENANT_KEY) { promptForKey(); return; }
+    if (!getToken()) { showLogin(); return; }
     loading.style.display = 'block'; cards.innerHTML = '';
     try {
-      let url = `${API_URL}/applications?tenant_id=${encodeURIComponent(TENANT_ID || '')}&limit=20`;
+      // tenant_id comes from the token claim server-side -- no URL param needed.
+      let url = `${API_URL}/applications?limit=20`;
       if (currentFilter !== 'all') url += `&status=${currentFilter}`;
       if (nextToken) url += `&next_token=${encodeURIComponent(nextToken)}`;
       const res = await fetch(url, { headers: authHeaders() });
       if (res.status === 401 || res.status === 403) {
-        TENANT_KEY = null;
-        sessionStorage.removeItem('screenify_key_' + TENANT_ID);
-        promptForKey('That key was not accepted. Try again.');
+        clearSession();
+        showLogin('Your session has expired. Please sign in again.');
         return;
       }
       if (!res.ok) throw new Error('Failed to fetch');
@@ -327,7 +451,7 @@
         const res = await fetch(`${API_URL}/applications/${encodeURIComponent(pending.id)}/decision`, {
           method: 'POST',
           headers: authHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ decision: pending.decision, tenant_id: TENANT_ID })
+          body: JSON.stringify({ decision: pending.decision })
         });
         if (!res.ok) throw new Error('Decision failed');
         const data = await res.json();

@@ -30,13 +30,13 @@ import boto3
 # (eu-north-1). Cross-region Textract->S3 access fails with
 # InvalidS3ObjectException, which was one of the original bugs.
 REGION = os.environ.get("TEXTRACT_REGION", "eu-north-1")
-
+DYNAMODB_REGION = os.environ.get("AWS_REGION", "eu-north-1")
 s3_client = boto3.client("s3", region_name=REGION)
 textract_client = boto3.client("textract", region_name=REGION)
 bedrock_client = boto3.client(
     "bedrock-runtime", region_name=os.environ.get("BEDROCK_REGION", "us-east-1")
 )
-dynamodb = boto3.resource("dynamodb", region_name=REGION)
+dynamodb = boto3.resource("dynamodb", region_name=DYNAMODB_REGION)
 lambda_client = boto3.client("lambda", region_name=REGION)
 
 APPLICATIONS_TABLE = os.environ["APPLICATIONS_TABLE"]

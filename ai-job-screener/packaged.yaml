@@ -395,7 +395,6 @@ Resources:
       UserPoolName: screenify-recruiters
       AdminCreateUserConfig:
         AllowAdminCreateUserOnly: true
-        UnusedAccountValidityDays: 7
       UsernameAttributes:
       - email
       AutoVerifiedAttributes:
@@ -407,14 +406,14 @@ Resources:
           RequireLowercase: true
           RequireNumbers: true
           RequireSymbols: false
+          TemporaryPasswordValidityDays: 7
       Schema:
       - Name: tenant_id
         AttributeDataType: String
         Mutable: false
         Required: false
-      Tags:
-      - Key: aws-apn-id
-        Value: pc:biytoe4tqjehdsa25lc534ba2
+      UserPoolTags:
+        aws-apn-id: pc:biytoe4tqjehdsa25lc534ba2
   RecruiterUserPoolClient:
     Type: AWS::Cognito::UserPoolClient
     Properties:
@@ -443,7 +442,7 @@ Resources:
     Properties:
       LayerName: ai-screener-deps
       ContentUri: 
-        s3://ai-screener-sam-artifacts-834424012688/ac93688ec1bcdd551e3953599f23f681
+        s3://ai-screener-sam-artifacts-834424012688/882e9de7d565a7cd7a746c36e8a47f3d
       CompatibleRuntimes:
       - python3.12
   ApiGateway:
